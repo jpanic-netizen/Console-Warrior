@@ -11,6 +11,9 @@
     "smoke": "bash test/fixtures/run-smoke.sh"
   },
   "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "axe-core": "^4.10.2",
     "commander": "^12.1.0",
