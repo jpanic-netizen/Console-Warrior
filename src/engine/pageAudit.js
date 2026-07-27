@@ -33,7 +33,9 @@ export async function auditPage(context, url, opts) {
   await primePage(page);
   await installDomHelpers(page);
 
-  const axe = await auditAxeBaseline(page).catch((e) => ({ error: String(e), violations: [] }));
+  const axe = await auditAxeBaseline(page)
+    .then((violations) => ({ violations }))
+    .catch((e) => ({ error: String(e), violations: [] }));
   const contrast = await auditContrast(page);
   const altText = await auditAltText(page);
   const headings = await auditHeadings(page);
