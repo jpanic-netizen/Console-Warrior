@@ -28,6 +28,14 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function pagePath(u) {
+  try {
+    return new URL(u).pathname || '/';
+  } catch {
+    return u;
+  }
+}
+
 // ---------- Router ----------
 
 function currentRoute() {
@@ -47,6 +55,7 @@ function teardown() {
     activeEventSource.close();
     activeEventSource = null;
   }
+  closeLightbox();
 }
 
 function render() {
@@ -64,29 +73,21 @@ async function renderNewAuditView() {
   const tpl = document.getElementById('tpl-new-audit');
   app.replaceChildren(tpl.content.cloneNode(true));
 
-  const urlRows = document.getElementById('url-rows');
-  const addRow = (value = '') => {
-    const row = document.createElement('div');
-    row.className = 'url-row';
-    row.innerHTML = `<input type="url" placeholder="https://example.com/page" value="${escapeHtml(value)}"><button type="button" class="btn-icon" aria-label="Remove page">&times;</button>`;
-    row.querySelector('button').addEventListener('click', () => {
-      row.remove();
-      if (!urlRows.children.length) addRow();
-    });
-    urlRows.appendChild(row);
-    return row;
-  };
-  addRow();
+  const urlBulk = document.getElementById('url-bulk');
+  const urlCount = document.getElementById('url-count');
 
-  document.getElementById('add-url-row').addEventListener('click', () => addRow());
-  document.getElementById('paste-urls').addEventListener('click', () => {
-    const text = prompt('Paste one URL per line (or comma-separated):');
-    if (!text) return;
-    const urls = text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-    if (!urls.length) return;
-    urlRows.replaceChildren();
-    urls.forEach((u) => addRow(u));
-  });
+  function parsedUrls() {
+    return urlBulk.value
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  function updateCount() {
+    const n = parsedUrls().length;
+    urlCount.textContent = `${n} page${n === 1 ? '' : 's'}`;
+  }
+  urlBulk.addEventListener('input', updateCount);
+  updateCount();
 
   const presetSelect = document.getElementById('preset-select');
   try {
@@ -105,8 +106,8 @@ async function renderNewAuditView() {
         document.getElementById('viewport-width').value = p.viewport.width;
         document.getElementById('viewport-height').value = p.viewport.height;
       }
-      urlRows.replaceChildren();
-      p.urls.forEach((u) => addRow(u));
+      urlBulk.value = p.urls.join('\n');
+      updateCount();
     });
   } catch {
     // presets are a convenience only — a fetch failure here shouldn't block manual entry
@@ -116,7 +117,7 @@ async function renderNewAuditView() {
     const errorEl = document.getElementById('form-error');
     errorEl.textContent = '';
     const siteName = document.getElementById('site-name').value.trim();
-    const urls = [...urlRows.querySelectorAll('input')].map((i) => i.value.trim()).filter(Boolean);
+    const urls = parsedUrls();
     const width = Number(document.getElementById('viewport-width').value) || null;
     const height = Number(document.getElementById('viewport-height').value) || null;
     const concurrency = Number(document.getElementById('concurrency').value) || 3;
@@ -152,6 +153,7 @@ async function renderNewAuditView() {
 // ---------- Job view ----------
 
 const SEVERITY_LABEL = { critical: 'Critical', serious: 'Serious', moderate: 'Moderate', minor: 'Minor' };
+const SEVERITY_ORDER = ['critical', 'serious', 'moderate', 'minor', 'manual'];
 
 function renderKpis(summary) {
   const totals = Object.values(summary.totals).reduce((a, b) => a + b, 0);
@@ -163,27 +165,153 @@ function renderKpis(summary) {
   `;
 }
 
+function renderBreakdown(breakdown) {
+  const total = Object.values(breakdown.bySeverity).reduce((a, b) => a + b, 0) || 1;
+  const sevHtml = SEVERITY_ORDER.filter((k) => breakdown.bySeverity[k] > 0)
+    .map((k) => {
+      const n = breakdown.bySeverity[k];
+      const pct = Math.round((n / total) * 100);
+      const label = k === 'manual' ? 'Manual review' : SEVERITY_LABEL[k];
+      const cls = k === 'manual' ? 'manual' : k;
+      return `
+        <div class="breakdown-bar-row">
+          <span class="breakdown-bar-label"><span class="chip ${cls}">${label}</span></span>
+          <div class="breakdown-bar-track"><div class="breakdown-bar-fill ${cls}" style="width:${pct}%"></div></div>
+          <span class="breakdown-bar-num">${n}</span>
+        </div>`;
+    })
+    .join('');
+  document.getElementById('breakdown-severity').innerHTML = sevHtml || '<p class="empty-note">No findings.</p>';
+
+  const checkRows = breakdown.byCheck
+    .map((c) => `<tr><td>${escapeHtml(c.checkLabel)}</td><td class="num">${c.count}</td><td class="num">${c.pages}</td></tr>`)
+    .join('');
+  document.getElementById('breakdown-check-rows').innerHTML = checkRows || '<tr><td colspan="3" class="empty-note">No findings.</td></tr>';
+
+  const pageRows = breakdown.byPage
+    .map((p) => `<tr><td class="pagecell" title="${escapeHtml(p.page)}">${escapeHtml(pagePath(p.page))}</td><td class="num">${p.automated}</td><td class="num">${p.manual}</td></tr>`)
+    .join('');
+  document.getElementById('breakdown-page-rows').innerHTML = pageRows || '<tr><td colspan="3" class="empty-note">No findings.</td></tr>';
+}
+
+function severityChip(f) {
+  if (f.manualReview) return '<span class="chip manual">Manual</span>';
+  if (f.severity) return `<span class="chip ${f.severity}">${SEVERITY_LABEL[f.severity] || f.severity}</span>`;
+  return '';
+}
+
+function thumbHtml(screenshot, fullPageScreenshot, altLabel) {
+  const src = screenshot || fullPageScreenshot;
+  if (!src) return '<div class="finding-thumb empty">no capture</div>';
+  return `<img class="finding-thumb" src="${escapeHtml(src)}" alt="${escapeHtml(altLabel)}" aria-label="${escapeHtml(altLabel)}" loading="lazy" data-full="${escapeHtml(src)}" tabindex="0" role="button" aria-haspopup="dialog">`;
+}
+
+// Decorative-only variant for the sample thumbnail shown inside a <summary> —
+// a <summary> is itself an interactive disclosure control, so nesting another
+// focusable/interactive element inside it violates the nested-interactive rule.
+function thumbPreviewHtml(screenshot, fullPageScreenshot) {
+  const src = screenshot || fullPageScreenshot;
+  if (!src) return '<div class="finding-thumb-preview empty">no capture</div>';
+  return `<img class="finding-thumb-preview" src="${escapeHtml(src)}" alt="" loading="lazy">`;
+}
+
 function findingCard(f) {
-  const chip = f.manualReview
-    ? '<span class="chip manual">Manual</span>'
-    : f.severity
-      ? `<span class="chip ${f.severity}">${SEVERITY_LABEL[f.severity] || f.severity}</span>`
-      : '';
-  const thumbSrc = f.screenshot || f.fullPageScreenshot;
-  const thumb = thumbSrc
-    ? `<img class="finding-thumb" src="${escapeHtml(thumbSrc)}" alt="Evidence screenshot" loading="lazy" data-full="${escapeHtml(thumbSrc)}">`
-    : `<div class="finding-thumb empty">no capture</div>`;
-  let path = '/';
-  try { path = new URL(f.page).pathname || '/'; } catch { /* keep default */ }
+  const path = pagePath(f.page);
   return `
     <div class="finding-card">
-      ${thumb}
+      ${thumbHtml(f.screenshot, f.fullPageScreenshot, `Evidence for ${f.checkLabel} on ${path}`)}
       <div class="finding-body">
-        <div class="finding-top">${chip}<span class="finding-page" title="${escapeHtml(f.page)}">${escapeHtml(path)}</span><strong>${escapeHtml(f.checkLabel)}</strong></div>
+        <div class="finding-top">${severityChip(f)}<span class="finding-page" title="${escapeHtml(f.page)}">${escapeHtml(path)}</span><strong>${escapeHtml(f.checkLabel)}</strong></div>
         <div class="finding-summary">${escapeHtml(f.summary)}</div>
       </div>
     </div>`;
 }
+
+function findingGroupCard(g) {
+  const sample = g.instances.find((i) => i.screenshot) || g.instances[0] || {};
+  const pageListHtml = g.pages
+    .map((page) => {
+      const inst = g.instances.find((i) => i.page === page) || {};
+      return `
+        <li class="finding-page-row">
+          ${thumbHtml(inst.screenshot, inst.fullPageScreenshot, `Evidence for ${g.checkLabel} on ${pagePath(page)}`)}
+          <span class="finding-page-row-label" title="${escapeHtml(page)}">${escapeHtml(pagePath(page))}</span>
+        </li>`;
+    })
+    .join('');
+  return `
+    <details class="finding-group">
+      <summary class="finding-group-summary">
+        <span class="finding-thumb-wrap">${thumbPreviewHtml(sample.screenshot, sample.fullPageScreenshot)}</span>
+        <span class="finding-group-meta">
+          <span class="finding-top">${severityChip(g)}<strong>${escapeHtml(g.checkLabel)}</strong></span>
+          <span class="finding-summary">${escapeHtml(g.summary)}</span>
+        </span>
+        <span class="finding-page-count">${g.pageCount} page${g.pageCount === 1 ? '' : 's'}</span>
+      </summary>
+      <ul class="finding-page-list">${pageListHtml}</ul>
+    </details>`;
+}
+
+// ---------- Lightbox ----------
+
+function collectVisibleThumbs() {
+  return [...document.querySelectorAll('.finding-thumb:not(.empty)')];
+}
+
+let lightboxIndex = -1;
+function openLightboxAt(index) {
+  const thumbs = collectVisibleThumbs();
+  if (!thumbs.length) return;
+  lightboxIndex = ((index % thumbs.length) + thumbs.length) % thumbs.length;
+  const el = thumbs[lightboxIndex];
+  const src = el.dataset.full || el.src;
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox-caption').textContent = el.alt || '';
+  document.getElementById('lightbox-download').href = src;
+  const lightbox = document.getElementById('lightbox');
+  lightbox.hidden = false;
+  document.getElementById('lightbox-close').focus();
+}
+function closeLightbox() {
+  const lightbox = document.getElementById('lightbox');
+  if (!lightbox || lightbox.hidden) return;
+  lightbox.hidden = true;
+  lightboxIndex = -1;
+}
+function lightboxStep(delta) {
+  if (lightboxIndex < 0) return;
+  openLightboxAt(lightboxIndex + delta);
+}
+
+document.addEventListener('click', (e) => {
+  const thumb = e.target.closest('.finding-thumb:not(.empty)');
+  if (!thumb) return;
+  const thumbs = collectVisibleThumbs();
+  openLightboxAt(thumbs.indexOf(thumb));
+});
+document.addEventListener('keydown', (e) => {
+  const thumb = document.activeElement;
+  if (e.key === 'Enter' && thumb && thumb.classList.contains('finding-thumb')) {
+    const thumbs = collectVisibleThumbs();
+    openLightboxAt(thumbs.indexOf(thumb));
+  }
+});
+document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+document.getElementById('lightbox-prev').addEventListener('click', () => lightboxStep(-1));
+document.getElementById('lightbox-next').addEventListener('click', () => lightboxStep(1));
+document.getElementById('lightbox').addEventListener('click', (e) => {
+  if (e.target.id === 'lightbox') closeLightbox();
+});
+document.addEventListener('keydown', (e) => {
+  const lightbox = document.getElementById('lightbox');
+  if (lightbox.hidden) return;
+  if (e.key === 'Escape') closeLightbox();
+  else if (e.key === 'ArrowLeft') lightboxStep(-1);
+  else if (e.key === 'ArrowRight') lightboxStep(1);
+});
+
+// ---------- Job view ----------
 
 async function renderJobView(id) {
   const tpl = document.getElementById('tpl-job');
@@ -194,6 +322,7 @@ async function renderJobView(id) {
   const statusEl = document.getElementById('job-status');
   const cancelBtn = document.getElementById('cancel-job');
   const progressFill = document.getElementById('progress-bar-fill');
+  const progressTrack = document.getElementById('progress-bar-track');
   const progressCaption = document.getElementById('progress-caption');
   const pageList = document.getElementById('page-list');
   const resultsSection = document.getElementById('results-section');
@@ -219,6 +348,8 @@ async function renderJobView(id) {
     const pct = total ? Math.round((done / total) * 100) : 0;
     progressFill.style.width = `${pct}%`;
     progressCaption.textContent = `${done} / ${total} pages complete`;
+    progressTrack.setAttribute('aria-valuemax', String(total || 1));
+    progressTrack.setAttribute('aria-valuenow', String(done));
   }
 
   function ensureRow(url) {
@@ -257,10 +388,11 @@ async function renderJobView(id) {
     }
   }
 
-  // Safe to call more than once (SSE replay + the hydrated-job fallback both
-  // may trigger it) — resets the filter dropdowns each time instead of
-  // duplicating their options.
+  // ---- Results: breakdown + findings (grouped/raw, filter/search/sort/paginate) ----
+
+  const state = { view: 'grouped', page: 0, pageSize: 25 };
   let resultsLoading = null;
+
   async function loadResults() {
     if (resultsLoading) return resultsLoading;
     resultsLoading = (async () => {
@@ -278,6 +410,13 @@ async function renderJobView(id) {
       document.getElementById('dl-json').href = `/api/audits/${encodeURIComponent(id)}/download/json`;
       document.getElementById('dl-summary').href = `/api/audits/${encodeURIComponent(id)}/download/summary`;
       document.getElementById('dl-screenshots').href = `/api/audits/${encodeURIComponent(id)}/download/screenshots`;
+
+      try {
+        const breakdown = await fetchJSON(`/api/audits/${encodeURIComponent(id)}/breakdown`);
+        renderBreakdown(breakdown);
+      } catch {
+        // breakdown is supplementary — KPIs above still convey the totals
+      }
 
       const pageSelect = document.getElementById('filter-page');
       const checkSelect = document.getElementById('filter-check');
@@ -298,13 +437,35 @@ async function renderJobView(id) {
       [...pageRows.keys()].forEach((url) => {
         const opt = document.createElement('option');
         opt.value = url;
-        try { opt.textContent = new URL(url).pathname || '/'; } catch { opt.textContent = url; }
+        opt.textContent = pagePath(url);
         pageSelect.appendChild(opt);
       });
 
       const grid = document.getElementById('findings-grid');
       const countEl = document.getElementById('filter-count');
+      const pagerPrev = document.getElementById('pager-prev');
+      const pagerNext = document.getElementById('pager-next');
+      const pagerStatus = document.getElementById('pager-status');
+      const sortSelect = document.getElementById('filter-sort');
+      const pageSizeSelect = document.getElementById('filter-page-size');
+      const searchInput = document.getElementById('filter-search');
+      const viewGroupedBtn = document.getElementById('view-grouped');
+      const viewRawBtn = document.getElementById('view-raw');
 
+      function setView(view) {
+        state.view = view;
+        state.page = 0;
+        viewGroupedBtn.setAttribute('aria-pressed', String(view === 'grouped'));
+        viewRawBtn.setAttribute('aria-pressed', String(view === 'raw'));
+        // "Pages affected" sort only means something for the grouped view.
+        sortSelect.querySelector('option[value="pageCount"]').hidden = view !== 'grouped';
+        if (view !== 'grouped' && sortSelect.value === 'pageCount') sortSelect.value = 'severity';
+        applyFilters();
+      }
+      viewGroupedBtn.addEventListener('click', () => setView('grouped'));
+      viewRawBtn.addEventListener('click', () => setView('raw'));
+
+      let searchDebounce;
       async function applyFilters() {
         const params = new URLSearchParams();
         if (pageSelect.value) params.set('page', pageSelect.value);
@@ -313,17 +474,49 @@ async function renderJobView(id) {
         if (severityValue) params.set('severity', severityValue);
         const manualValue = document.getElementById('filter-manual').value;
         if (manualValue) params.set('manualReview', manualValue);
+        if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
+        if (state.view === 'grouped') params.set('grouped', 'true');
+        params.set('sortBy', sortSelect.value);
+        state.pageSize = Number(pageSizeSelect.value) || 25;
+        params.set('limit', String(state.pageSize));
+        params.set('offset', String(state.page * state.pageSize));
 
-        const findings = await fetchJSON(`/api/audits/${encodeURIComponent(id)}/findings?${params.toString()}`);
-        countEl.textContent = `${findings.length} finding${findings.length === 1 ? '' : 's'}`;
-        grid.innerHTML = findings.length
-          ? findings.map(findingCard).join('')
+        const body = await fetchJSON(`/api/audits/${encodeURIComponent(id)}/findings?${params.toString()}`);
+        const totalPages = Math.max(1, Math.ceil(body.total / state.pageSize));
+        countEl.textContent = `${body.total} ${state.view === 'grouped' ? 'group' : 'finding'}${body.total === 1 ? '' : 's'}`;
+        pagerStatus.textContent = `Page ${body.total ? state.page + 1 : 0} of ${totalPages}`;
+        pagerPrev.disabled = state.page <= 0;
+        pagerNext.disabled = state.page + 1 >= totalPages;
+
+        grid.innerHTML = body.items.length
+          ? body.items.map((item) => (body.grouped ? findingGroupCard(item) : findingCard(item))).join('')
           : '<p class="empty-note">No findings match these filters.</p>';
       }
 
-      [pageSelect, checkSelect, document.getElementById('filter-severity'), document.getElementById('filter-manual')].forEach((el) =>
-        el.addEventListener('change', applyFilters)
+      [pageSelect, checkSelect, document.getElementById('filter-severity'), document.getElementById('filter-manual'), sortSelect, pageSizeSelect].forEach((el) =>
+        el.addEventListener('change', () => {
+          state.page = 0;
+          applyFilters();
+        })
       );
+      searchInput.addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+          state.page = 0;
+          applyFilters();
+        }, 250);
+      });
+      pagerPrev.addEventListener('click', () => {
+        if (state.page > 0) {
+          state.page -= 1;
+          applyFilters();
+        }
+      });
+      pagerNext.addEventListener('click', () => {
+        state.page += 1;
+        applyFilters();
+      });
+
       await applyFilters();
     })();
     return resultsLoading;
@@ -383,20 +576,6 @@ async function renderJobView(id) {
   };
 }
 
-document.addEventListener('click', (e) => {
-  const img = e.target.closest('.finding-thumb:not(.empty)');
-  if (!img) return;
-  const lightbox = document.getElementById('lightbox');
-  document.getElementById('lightbox-img').src = img.dataset.full || img.src;
-  lightbox.hidden = false;
-});
-document.getElementById('lightbox-close').addEventListener('click', () => {
-  document.getElementById('lightbox').hidden = true;
-});
-document.getElementById('lightbox').addEventListener('click', (e) => {
-  if (e.target.id === 'lightbox') e.currentTarget.hidden = true;
-});
-
 // ---------- History view ----------
 
 async function renderHistoryView() {
@@ -425,7 +604,7 @@ async function renderHistoryView() {
         <td>${j.urls.length}</td>
         <td><span class="status-pill ${j.status}">${j.status}</span></td>
         <td>${fmtTime(j.startedAt || j.createdAt)}</td>
-        <td><a href="#/jobs/${encodeURIComponent(j.id)}">View →</a></td>
+        <td><a href="#/jobs/${encodeURIComponent(j.id)}">View &rarr;<span class="sr-only"> ${escapeHtml(j.siteName)}</span></a></td>
       </tr>`
     )
     .join('');

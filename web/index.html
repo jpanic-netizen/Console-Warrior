@@ -8,18 +8,19 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<a href="#app" class="skip-link">Skip to main content</a>
 <header class="topbar">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true">&#9855;</span>
     <span class="brand-name">Console Warrior</span>
   </div>
-  <nav class="topnav">
+  <nav class="topnav" aria-label="Primary">
     <a href="#/new" data-nav="new">New audit</a>
     <a href="#/history" data-nav="history">History</a>
   </nav>
 </header>
 
-<main id="app" class="app"></main>
+<main id="app" class="app" tabindex="-1"></main>
 
 <template id="tpl-new-audit">
   <section class="panel">
@@ -27,7 +28,7 @@
     <p class="sub">WCAG 2.1 AA structured review (SOW S2.3.F) — Playwright runs on the server; this page only drives it.</p>
 
     <div class="field-row">
-      <label class="field">
+      <label class="field" for="preset-select">
         <span>Preset</span>
         <select id="preset-select">
           <option value="">— none, fill in manually —</option>
@@ -36,23 +37,23 @@
     </div>
 
     <div class="field-row">
-      <label class="field">
+      <label class="field" for="site-name">
         <span>Site name</span>
         <input id="site-name" type="text" placeholder="e.g. OutSail Staging" autocomplete="off">
       </label>
-      <label class="field field-narrow">
+      <label class="field field-narrow" for="concurrency">
         <span>Concurrency</span>
-        <input id="concurrency" type="number" min="1" max="10" value="3">
+        <input id="concurrency" type="number" min="1" max="8" value="3">
       </label>
     </div>
 
     <fieldset class="field-row viewport-fields">
       <legend>Viewport (optional)</legend>
-      <label class="field field-narrow">
+      <label class="field field-narrow" for="viewport-width">
         <span>Width</span>
         <input id="viewport-width" type="number" min="320" placeholder="1440">
       </label>
-      <label class="field field-narrow">
+      <label class="field field-narrow" for="viewport-height">
         <span>Height</span>
         <input id="viewport-height" type="number" min="240" placeholder="900">
       </label>
@@ -60,13 +61,11 @@
 
     <div class="urls-block">
       <div class="urls-header">
-        <span>Pages to audit</span>
-        <div class="urls-actions">
-          <button type="button" class="btn-ghost" id="add-url-row">+ Add page</button>
-          <button type="button" class="btn-ghost" id="paste-urls">Paste list…</button>
-        </div>
+        <label for="url-bulk">Pages to audit</label>
+        <span class="url-count" id="url-count">0 pages</span>
       </div>
-      <div id="url-rows" class="url-rows"></div>
+      <textarea id="url-bulk" rows="10" spellcheck="false" placeholder="https://example.com/&#10;https://example.com/about&#10;https://example.com/contact"></textarea>
+      <p class="field-hint">One URL per line — paste a whole list at once, no need to add rows one at a time.</p>
     </div>
 
     <div class="form-actions">
@@ -90,17 +89,18 @@
     </div>
 
     <div class="progress-card">
-      <div class="progress-bar-track">
+      <div class="progress-bar-track" role="progressbar" aria-label="Pages audited" id="progress-bar-track" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
         <div id="progress-bar-fill" class="progress-bar-fill" style="width:0%"></div>
       </div>
       <div class="progress-caption" id="progress-caption">Queued…</div>
-      <ul id="page-list" class="page-list"></ul>
+      <ul id="page-list" class="page-list" tabindex="0" aria-label="Per-page audit progress"></ul>
     </div>
 
-    <section id="results-section" hidden>
+    <section id="results-section" hidden aria-labelledby="results-heading">
+      <h2 id="results-heading" class="section-heading">Results</h2>
       <div class="kpis" id="kpi-strip"></div>
 
-      <div class="downloads">
+      <div class="downloads" role="group" aria-label="Download reports">
         <a class="btn-secondary" id="dl-html" target="_blank">HTML report</a>
         <a class="btn-secondary" id="dl-docx">Word report</a>
         <a class="btn-secondary" id="dl-json">JSON results</a>
@@ -108,16 +108,48 @@
         <a class="btn-secondary" id="dl-screenshots">Screenshots (.zip)</a>
       </div>
 
+      <h2 class="section-heading">Breakdown</h2>
+      <div class="breakdown-grid">
+        <div class="breakdown-card">
+          <h3>By severity</h3>
+          <div id="breakdown-severity" class="breakdown-bars"></div>
+        </div>
+        <div class="breakdown-card">
+          <h3>By check type</h3>
+          <div class="table-scroll">
+            <table class="breakdown-table" id="breakdown-check-table">
+              <thead><tr><th scope="col">Check</th><th scope="col" class="num">Findings</th><th scope="col" class="num">Pages</th></tr></thead>
+              <tbody id="breakdown-check-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="breakdown-card">
+          <h3>By page</h3>
+          <div class="table-scroll">
+            <table class="breakdown-table" id="breakdown-page-table">
+              <thead><tr><th scope="col">Page</th><th scope="col" class="num">Automated</th><th scope="col" class="num">Manual</th></tr></thead>
+              <tbody id="breakdown-page-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="section-heading">Findings</h2>
+      <div class="view-toggle" role="group" aria-label="Findings view">
+        <button type="button" id="view-grouped" class="toggle-btn" aria-pressed="true">Grouped</button>
+        <button type="button" id="view-raw" class="toggle-btn" aria-pressed="false">Raw findings</button>
+      </div>
+
       <div class="filters">
-        <label class="field field-narrow">
+        <label class="field field-narrow" for="filter-page">
           <span>Page</span>
           <select id="filter-page"><option value="">All pages</option></select>
         </label>
-        <label class="field field-narrow">
+        <label class="field field-narrow" for="filter-check">
           <span>Check</span>
           <select id="filter-check"><option value="">All checks</option></select>
         </label>
-        <label class="field field-narrow">
+        <label class="field field-narrow" for="filter-severity">
           <span>Severity</span>
           <select id="filter-severity">
             <option value="">All severities</option>
@@ -127,7 +159,7 @@
             <option value="minor">Minor</option>
           </select>
         </label>
-        <label class="field field-narrow">
+        <label class="field field-narrow" for="filter-manual">
           <span>Type</span>
           <select id="filter-manual">
             <option value="">Automated + manual</option>
@@ -135,7 +167,37 @@
             <option value="true">Manual review only</option>
           </select>
         </label>
-        <span class="filter-count" id="filter-count"></span>
+        <label class="field" for="filter-search">
+          <span>Search</span>
+          <input type="search" id="filter-search" placeholder="Search summary, check, or page…">
+        </label>
+        <label class="field field-narrow" for="filter-sort">
+          <span>Sort by</span>
+          <select id="filter-sort">
+            <option value="severity">Severity</option>
+            <option value="check">Check</option>
+            <option value="page">Page</option>
+            <option value="pageCount" class="grouped-only">Pages affected</option>
+          </select>
+        </label>
+        <label class="field field-narrow" for="filter-page-size">
+          <span>Per page</span>
+          <select id="filter-page-size">
+            <option value="10">10</option>
+            <option value="25" selected>25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="results-toolbar">
+        <span class="filter-count" id="filter-count" aria-live="polite"></span>
+        <div class="pager" id="pager">
+          <button type="button" id="pager-prev" class="btn-ghost">&larr; Prev</button>
+          <span id="pager-status">Page 1</span>
+          <button type="button" id="pager-next" class="btn-ghost">Next &rarr;</button>
+        </div>
       </div>
 
       <div class="findings-grid" id="findings-grid"></div>
@@ -148,16 +210,38 @@
     <h1>Audit history</h1>
     <div class="table-wrap">
       <table class="history-table">
-        <thead><tr><th>Site</th><th>Pages</th><th>Status</th><th>Started</th><th></th></tr></thead>
+        <thead><tr><th scope="col">Site</th><th scope="col">Pages</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody id="history-rows"></tbody>
       </table>
     </div>
   </section>
 </template>
 
-<div id="lightbox" class="lightbox" hidden>
-  <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Close">&times;</button>
-  <img id="lightbox-img" alt="Finding screenshot, enlarged">
+<template id="tpl-finding-group">
+  <details class="finding-group">
+    <summary class="finding-group-summary">
+      <span class="finding-thumb-wrap"></span>
+      <span class="finding-group-meta">
+        <span class="finding-top"></span>
+        <span class="finding-summary"></span>
+      </span>
+      <span class="finding-page-count"></span>
+    </summary>
+    <ul class="finding-page-list"></ul>
+  </details>
+</template>
+
+<div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Finding evidence screenshot">
+  <button type="button" id="lightbox-prev" class="lightbox-nav lightbox-prev" aria-label="Previous screenshot">&#8592;</button>
+  <figure class="lightbox-figure">
+    <img id="lightbox-img" alt="Finding screenshot, enlarged">
+    <figcaption id="lightbox-caption"></figcaption>
+  </figure>
+  <button type="button" id="lightbox-next" class="lightbox-nav lightbox-next" aria-label="Next screenshot">&#8594;</button>
+  <div class="lightbox-controls">
+    <a id="lightbox-download" class="btn-secondary" download>Download</a>
+    <button type="button" id="lightbox-close" class="btn-secondary">Close</button>
+  </div>
 </div>
 
 <script src="/app.js" type="module"></script>
