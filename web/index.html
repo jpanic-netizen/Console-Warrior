@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Console Warrior — Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">&#9855;</span>
+    <span class="brand-name">Console Warrior</span>
+  </div>
+  <nav class="topnav">
+    <a href="#/new" data-nav="new">New audit</a>
+    <a href="#/history" data-nav="history">History</a>
+  </nav>
+</header>
+
+<main id="app" class="app"></main>
+
+<template id="tpl-new-audit">
+  <section class="panel">
+    <h1>Start a new audit</h1>
+    <p class="sub">WCAG 2.1 AA structured review (SOW S2.3.F) — Playwright runs on the server; this page only drives it.</p>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Preset</span>
+        <select id="preset-select">
+          <option value="">— none, fill in manually —</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Site name</span>
+        <input id="site-name" type="text" placeholder="e.g. OutSail Staging" autocomplete="off">
+      </label>
+      <label class="field field-narrow">
+        <span>Concurrency</span>
+        <input id="concurrency" type="number" min="1" max="10" value="3">
+      </label>
+    </div>
+
+    <fieldset class="field-row viewport-fields">
+      <legend>Viewport (optional)</legend>
+      <label class="field field-narrow">
+        <span>Width</span>
+        <input id="viewport-width" type="number" min="320" placeholder="1440">
+      </label>
+      <label class="field field-narrow">
+        <span>Height</span>
+        <input id="viewport-height" type="number" min="240" placeholder="900">
+      </label>
+    </fieldset>
+
+    <div class="urls-block">
+      <div class="urls-header">
+        <span>Pages to audit</span>
+        <div class="urls-actions">
+          <button type="button" class="btn-ghost" id="add-url-row">+ Add page</button>
+          <button type="button" class="btn-ghost" id="paste-urls">Paste list…</button>
+        </div>
+      </div>
+      <div id="url-rows" class="url-rows"></div>
+    </div>
+
+    <div class="form-actions">
+      <span id="form-error" class="form-error" role="alert"></span>
+      <button type="button" id="start-audit" class="btn-primary">Start audit</button>
+    </div>
+  </section>
+</template>
+
+<template id="tpl-job">
+  <section class="panel job-panel">
+    <div class="job-header">
+      <div>
+        <h1 id="job-title">—</h1>
+        <div class="job-meta" id="job-meta"></div>
+      </div>
+      <div class="job-header-actions">
+        <span id="job-status" class="status-pill">—</span>
+        <button type="button" id="cancel-job" class="btn-danger" hidden>Cancel audit</button>
+      </div>
+    </div>
+
+    <div class="progress-card">
+      <div class="progress-bar-track">
+        <div id="progress-bar-fill" class="progress-bar-fill" style="width:0%"></div>
+      </div>
+      <div class="progress-caption" id="progress-caption">Queued…</div>
+      <ul id="page-list" class="page-list"></ul>
+    </div>
+
+    <section id="results-section" hidden>
+      <div class="kpis" id="kpi-strip"></div>
+
+      <div class="downloads">
+        <a class="btn-secondary" id="dl-html" target="_blank">HTML report</a>
+        <a class="btn-secondary" id="dl-docx">Word report</a>
+        <a class="btn-secondary" id="dl-json">JSON results</a>
+        <a class="btn-secondary" id="dl-summary">Summary JSON</a>
+        <a class="btn-secondary" id="dl-screenshots">Screenshots (.zip)</a>
+      </div>
+
+      <div class="filters">
+        <label class="field field-narrow">
+          <span>Page</span>
+          <select id="filter-page"><option value="">All pages</option></select>
+        </label>
+        <label class="field field-narrow">
+          <span>Check</span>
+          <select id="filter-check"><option value="">All checks</option></select>
+        </label>
+        <label class="field field-narrow">
+          <span>Severity</span>
+          <select id="filter-severity">
+            <option value="">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="serious">Serious</option>
+            <option value="moderate">Moderate</option>
+            <option value="minor">Minor</option>
+          </select>
+        </label>
+        <label class="field field-narrow">
+          <span>Type</span>
+          <select id="filter-manual">
+            <option value="">Automated + manual</option>
+            <option value="false">Automated only</option>
+            <option value="true">Manual review only</option>
+          </select>
+        </label>
+        <span class="filter-count" id="filter-count"></span>
+      </div>
+
+      <div class="findings-grid" id="findings-grid"></div>
+    </section>
+  </section>
+</template>
+
+<template id="tpl-history">
+  <section class="panel">
+    <h1>Audit history</h1>
+    <div class="table-wrap">
+      <table class="history-table">
+        <thead><tr><th>Site</th><th>Pages</th><th>Status</th><th>Started</th><th></th></tr></thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+    </div>
+  </section>
+</template>
+
+<div id="lightbox" class="lightbox" hidden>
+  <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" alt="Finding screenshot, enlarged">
+</div>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>

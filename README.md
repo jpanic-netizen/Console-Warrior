@@ -62,6 +62,68 @@ npm install
 npx playwright install chromium
 ```
 
+## Web dashboard
+
+A browser UI around the same engine described above — same checks, same
+screenshots, same reports. Playwright still runs **only on the server**; the
+page in your browser is just a client of that server's HTTP/SSE API, so this
+is not something you could host as a static site (e.g. GitHub Pages) — it
+needs the Node process running to do anything.
+
+```bash
+npm run dashboard          # http://localhost:3000
+PORT=8080 npm run dashboard  # or: node src/server/index.js 8080
+```
+
+From the dashboard you can:
+
+- **Start a new audit** — enter a site name and add pages one at a time, or
+  paste a list. A **Preset** dropdown offers every config already checked
+  into `config/sites/` (including OutSail staging) as a one-click starting
+  point — pick one, then still add/remove/edit pages before starting.
+- **Watch live progress** — each page's status (queued/auditing/done/error)
+  streams in over Server-Sent Events as the run happens, no polling or
+  refresh required.
+- **Cancel a run in progress** — closes the browser immediately; whatever
+  pages had already finished are still summarized and reported instead of
+  the whole run being thrown away.
+- **Browse findings with evidence** — once a run completes (or is cancelled),
+  every finding is listed with its screenshot, filterable by **page**,
+  **check type**, **severity** (critical/serious/moderate/minor — axe-core
+  findings use axe's own per-rule impact rating; the bespoke checks are
+  graded by how directly they block a task), and **automated vs. manual
+  review**, so you can pull up e.g. "just the critical keyboard-trap findings
+  on the pricing page."
+- **Download the same four outputs the CLI produces** — HTML report, Word
+  report, raw JSON results, and a `screenshots.zip` of every evidence image
+  — plus the summary JSON.
+- **Revisit past runs** — the History view lists every audit this server has
+  run (including ones from a previous process, restored from the
+  `output/<run-id>/job.json` manifest each run writes alongside its reports).
+
+None of this changes what a check computes — the dashboard's server code
+(`src/server/`) calls the exact same `auditSite()`/`buildSummary()`/report
+renderers the CLI does, plus one small addition: `auditSite()` now also
+accepts an optional `signal` (for cancellation) and `onPageStart` (for live
+progress) — both are no-ops unless a caller passes them, so `node src/cli.js
+run` behaves exactly as before.
+
+### Dashboard API
+
+The frontend (`web/`) is a small vanilla-JS single-page app talking to a
+JSON/SSE API, useful directly if you want to script something instead:
+
+| Method & path | Does |
+|---|---|
+| `GET /api/presets` | Site configs from `config/sites/*.json` |
+| `POST /api/audits` | Start a run: `{ siteName, urls[], viewport?, concurrency? }` |
+| `GET /api/audits` | List all runs (current process + restored from disk) |
+| `GET /api/audits/:id` | Status, progress, summary once available |
+| `GET /api/audits/:id/events` | SSE stream of page-start/page-done/page-error/status/done |
+| `POST /api/audits/:id/cancel` | Cancel a pending/running audit |
+| `GET /api/audits/:id/findings` | Flat finding list; filter with `?page=&check=&severity=&manualReview=` |
+| `GET /api/audits/:id/download/{html,docx,json,summary,screenshots}` | The report files (`screenshots` streams a zip) |
+
 ## Usage
 
 ```bash
@@ -159,22 +221,46 @@ src/
     browser.js               browser/context launch, page priming
     domHelpers.js             shared in-page DOM primitives (visibility, tagging)
     pageAudit.js               runs all checks for one URL
-    siteAudit.js                concurrency-limited runner across a URL list
+    siteAudit.js                concurrency-limited runner across a URL list (cancellable)
     screenshot.js                 full-page + per-finding evidence capture
     checks/                        one module per SOW item + axe baseline
   report/
-    buildSummary.js            cross-page aggregation
+    buildSummary.js            cross-page aggregation (fail/manual-review counts)
+    findings.js                  flat per-instance finding list + severity, for the dashboard
     html/render.js               self-contained HTML report
     docx/render.js                 Word report (docx npm package)
     gdocs/upload.js                 optional Drive upload/convert
+  server/
+    app.js                    Express routes (REST + SSE) — Playwright-side of the dashboard
+    jobManager.js               in-memory run registry: start/cancel/list, disk-persisted manifest
+    index.js                     `npm run dashboard` entrypoint
+  util/slug.js               shared id/timestamp slugging (CLI + dashboard)
+web/                        dashboard frontend (vanilla JS/CSS, no build step)
 config/sites/                 one JSON file per client/site
-test/fixtures/                 local fixture page + static server for smoke tests
+test/                        node:test suite (`npm test`) + fixtures/ (local page + static server)
 ```
 
 ### Adding a new site
 
 Drop a new `config/sites/<name>.json` (copy `example.json`), fill in `name`
-and `urls`, then run `node src/cli.js run --config config/sites/<name>.json`.
+and `urls`, then either run `node src/cli.js run --config
+config/sites/<name>.json` or pick it from the dashboard's preset dropdown —
+both read the same file.
+
+### Tests
+
+```bash
+npm test          # node:test — findings/severity logic + a full dashboard API
+                   # run (real Playwright, against the local fixture page)
+npm run smoke      # CLI end-to-end, same fixture page (see below)
+```
+
+`test/findings.test.js` is pure unit tests of the severity/manual-review
+classification. `test/server.test.js` runs the real dashboard server against
+the fixture page: starts an audit over HTTP, polls it to completion, checks
+findings/filtering, downloads (including that the screenshots zip is a real
+zip), a mid-run cancel, and basic input validation — no mocking of
+Playwright or the checks themselves.
 
 ### Smoke-testing without hitting a real site
 
