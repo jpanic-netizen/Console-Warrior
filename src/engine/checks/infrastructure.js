@@ -35,8 +35,12 @@ async function checkRobotsTxt(origin, environment) {
   let res;
   try {
     res = await safeFetch(`${origin}/robots.txt`);
-  } catch {
-    return null; // unreachable — not itself a finding, just nothing to report
+  } catch (e) {
+    // The request itself failed (network error, timeout, DNS) — the check
+    // never actually completed, which is a different thing from "checked
+    // and there's no robots.txt". Must surface as not-verified, not a
+    // silent pass, or a real outage would read as "everything's fine".
+    return { checkFailed: true, summary: `Could not fetch robots.txt to check it: ${String(e && e.message || e)}` };
   }
   if (!res.ok) return null; // no robots.txt at all is not a defect
 
@@ -61,8 +65,8 @@ async function checkSitemapXml(origin, environment) {
   let res;
   try {
     res = await safeFetch(`${origin}/sitemap.xml`);
-  } catch {
-    return null;
+  } catch (e) {
+    return { checkFailed: true, summary: `Could not fetch sitemap.xml to check it: ${String(e && e.message || e)}` };
   }
   if (!res.ok) {
     if (environment === 'production') {
@@ -83,8 +87,8 @@ async function checkCustom404(origin) {
   let res;
   try {
     res = await safeFetch(`${origin}${probePath}`, { redirect: 'follow' });
-  } catch {
-    return null;
+  } catch (e) {
+    return { checkFailed: true, summary: `Could not probe a nonexistent URL to check 404 handling: ${String(e && e.message || e)}` };
   }
   if (res.status === 404) return null;
   return {
@@ -111,8 +115,12 @@ async function checkHttpsRedirect(origin, environment) {
   let res;
   try {
     res = await safeFetch(`${httpOrigin}/`);
-  } catch {
-    return null; // plain HTTP not even reachable — nothing to redirect, not itself a defect
+  } catch (e) {
+    // Unlike the other checks, this one is ambiguous by nature: the plain-HTTP
+    // listener being unreachable could mean "no insecure endpoint exists at
+    // all" (good) or "this check couldn't complete" (network blip). Default
+    // to not-verified rather than assume the favorable read either way.
+    return { checkFailed: true, summary: `Could not confirm HTTP redirects to HTTPS: ${String(e && e.message || e)}` };
   }
   const location = res.headers.get('location') || '';
   const redirectsToHttps = res.status >= 300 && res.status < 400 && location.startsWith('https:');

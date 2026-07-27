@@ -47,9 +47,12 @@ export function suggestSopSeverity(internalSeverity) {
  *   - 'subjective'            needs a human's eyes/judgment on something
  *                             automation has no ground truth for (decorative
  *                             image? real dead click? text over a gradient?)
- *   - 'external-blocked'      automation's own request was refused/blocked
- *                             (403/429/503/timeout on a third-party host) —
- *                             may well be a false positive, not a real defect
+ *   - 'external-blocked'      the finding traces back to something outside
+ *                             the site's own code or control — a third-party
+ *                             host that refused/blocked automation's request
+ *                             (403/429/503/timeout), or a third-party script
+ *                             that threw a console error — so it isn't
+ *                             automatically the site's own defect to fix
  *   - 'environment-dependent' the SAME technical fact means something
  *                             different on staging vs. production (SOP's own
  *                             "Disallow: /" example) and the environment
@@ -501,15 +504,32 @@ export const CHECK_DEFS = [
   {
     key: 'consoleErrors',
     section: '12 · Console errors',
-    label: 'Console error',
+    label: 'Console error (first-party)',
     severity: 'moderate',
     manualReview: false,
     items: (r) =>
-      (r.consoleErrors || []).map((c) => ({
-        summary: `[${c.origin}] ${truncate(c.message, 90)}${c.source ? ` (${truncate(c.source, 60)})` : ''}`,
-        origin: c.origin === 'external' ? 'external' : 'internal',
-        reference: c.source,
-      })),
+      (r.consoleErrors || [])
+        .filter((c) => c.origin !== 'external')
+        .map((c) => ({
+          summary: `[${c.origin}] ${truncate(c.message, 90)}${c.source ? ` (${truncate(c.source, 60)})` : ''}`,
+          origin: 'internal',
+          reference: c.source,
+        })),
+  },
+  {
+    key: 'consoleErrorsExternal',
+    section: '12 · Console errors',
+    label: 'Console error (third-party) — not necessarily the site’s own defect',
+    manualReview: true,
+    reviewReason: 'external-blocked',
+    items: (r) =>
+      (r.consoleErrors || [])
+        .filter((c) => c.origin === 'external')
+        .map((c) => ({
+          summary: `[external] ${truncate(c.message, 90)}${c.source ? ` (${truncate(c.source, 60)})` : ''}`,
+          origin: 'external',
+          reference: c.source,
+        })),
   },
   {
     key: 'infraRobotsTxt',
@@ -517,7 +537,12 @@ export const CHECK_DEFS = [
     label: 'robots.txt concern',
     severity: 'serious',
     manualReview: false,
-    items: (r) => (r.infrastructure?.robotsTxt && !r.infrastructure.robotsTxt.manualReview ? [{ summary: r.infrastructure.robotsTxt.summary }] : []),
+    scope: 'site',
+    subCheck: 'robotsTxt',
+    items: (r) =>
+      r.infrastructure?.robotsTxt && !r.infrastructure.robotsTxt.manualReview && !r.infrastructure.robotsTxt.checkFailed
+        ? [{ summary: r.infrastructure.robotsTxt.summary }]
+        : [],
   },
   {
     key: 'infraRobotsTxtReview',
@@ -525,6 +550,8 @@ export const CHECK_DEFS = [
     label: 'robots.txt — confirm intentional for this environment',
     manualReview: true,
     reviewReason: 'environment-dependent',
+    scope: 'site',
+    subCheck: 'robotsTxt',
     items: (r) => (r.infrastructure?.robotsTxt?.manualReview ? [{ summary: r.infrastructure.robotsTxt.summary }] : []),
   },
   {
@@ -533,7 +560,9 @@ export const CHECK_DEFS = [
     label: 'sitemap.xml concern',
     severity: 'moderate',
     manualReview: false,
-    items: (r) => (r.infrastructure?.sitemapXml ? [{ summary: r.infrastructure.sitemapXml.summary }] : []),
+    scope: 'site',
+    subCheck: 'sitemapXml',
+    items: (r) => (r.infrastructure?.sitemapXml && !r.infrastructure.sitemapXml.checkFailed ? [{ summary: r.infrastructure.sitemapXml.summary }] : []),
   },
   {
     key: 'infraCustom404',
@@ -541,7 +570,9 @@ export const CHECK_DEFS = [
     label: 'Custom 404 concern',
     severity: 'serious',
     manualReview: false,
-    items: (r) => (r.infrastructure?.custom404 ? [{ summary: r.infrastructure.custom404.summary }] : []),
+    scope: 'site',
+    subCheck: 'custom404',
+    items: (r) => (r.infrastructure?.custom404 && !r.infrastructure.custom404.checkFailed ? [{ summary: r.infrastructure.custom404.summary }] : []),
   },
   {
     key: 'infraHttps',
@@ -549,7 +580,12 @@ export const CHECK_DEFS = [
     label: 'HTTPS concern',
     severity: 'serious',
     manualReview: false,
-    items: (r) => (r.infrastructure?.httpsRedirect && !r.infrastructure.httpsRedirect.manualReview ? [{ summary: r.infrastructure.httpsRedirect.summary }] : []),
+    scope: 'site',
+    subCheck: 'httpsRedirect',
+    items: (r) =>
+      r.infrastructure?.httpsRedirect && !r.infrastructure.httpsRedirect.manualReview && !r.infrastructure.httpsRedirect.checkFailed
+        ? [{ summary: r.infrastructure.httpsRedirect.summary }]
+        : [],
   },
   {
     key: 'infraHttpsReview',
@@ -557,6 +593,8 @@ export const CHECK_DEFS = [
     label: 'HTTPS — confirm intentional for this environment',
     manualReview: true,
     reviewReason: 'environment-dependent',
+    scope: 'site',
+    subCheck: 'httpsRedirect',
     items: (r) => (r.infrastructure?.httpsRedirect?.manualReview ? [{ summary: r.infrastructure.httpsRedirect.summary }] : []),
   },
 ];
@@ -643,7 +681,7 @@ export const BUCKET_META = {
   },
   externalEnvironmentIssues: {
     title: 'External / environment issues',
-    hint: 'Automation was blocked by a third party, or the same technical fact means something different on staging vs. production and the environment wasn’t confirmed — may not be a real defect.',
+    hint: 'Traces back to something outside the site’s own code or control — a third-party host that blocked automation, a third-party script that errored, or the same technical fact meaning something different on staging vs. production with the environment unconfirmed — so it isn’t automatically the site’s own defect to fix.',
   },
   clientChangeRequests: {
     title: 'Client change requests',
@@ -698,15 +736,42 @@ export function bucketFindings(findings) {
  * that never ran, and a client reading only a list of problems can't tell
  * those apart otherwise. "What was not verified" covers pages the audit
  * itself couldn't complete (load failure, timeout) — zero findings there
- * means "untested", not "clean".
+ * means "untested", not "clean" — and, for the `scope: 'site'` infra
+ * checks, a sub-check whose own HTTP request failed (network error/
+ * timeout, not "checked and found nothing") — see infrastructure.js's
+ * `checkFailed` results. Without this, an outage while fetching
+ * robots.txt would silently read as "robots.txt passed".
  */
 export function buildCoverageReport(pageResults) {
   const ok = pageResults.filter((r) => r && !r.error);
   const errored = pageResults.filter((r) => r && r.error);
   const okUrls = ok.map((r) => r.url);
+  const notVerified = errored.map((r) => ({ url: r.url, reason: r.error }));
+
+  // Infrastructure runs once per site (per origin), attached to one page
+  // result — never treat it as if it ran on every page, and never let a
+  // sub-check that couldn't complete count as passed on any page.
+  const infraHolder = ok.find((r) => r.infrastructure);
+  const reportedFailedSubChecks = new Set();
 
   const passed = [];
   for (const def of CHECK_DEFS) {
+    if (def.scope === 'site') {
+      if (!infraHolder) continue; // infra never ran at all (e.g. no page completed) — nothing to say either way
+      const subResult = infraHolder.infrastructure[def.subCheck];
+      if (subResult?.checkFailed) {
+        if (!reportedFailedSubChecks.has(def.subCheck)) {
+          notVerified.push({ url: infraHolder.infrastructure.origin, reason: `${def.section} — ${subResult.summary}` });
+          reportedFailedSubChecks.add(def.subCheck);
+        }
+        continue; // not verified, so definitely not "passed" either
+      }
+      if ((def.items(infraHolder) || []).length === 0) {
+        passed.push({ key: def.key, section: def.section, label: def.label, manualReview: !!def.manualReview, pages: [infraHolder.infrastructure.origin] });
+      }
+      continue;
+    }
+
     const pagesWithFindings = new Set(ok.filter((r) => (def.items(r) || []).length > 0).map((r) => r.url));
     const passedPages = okUrls.filter((u) => !pagesWithFindings.has(u));
     if (passedPages.length) {
@@ -714,10 +779,7 @@ export function buildCoverageReport(pageResults) {
     }
   }
 
-  return {
-    passed,
-    notVerified: errored.map((r) => ({ url: r.url, reason: r.error })),
-  };
+  return { passed, notVerified };
 }
 
 /** Distinct check-type options for a filter dropdown, in SOW order. */

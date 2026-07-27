@@ -236,7 +236,7 @@ test('SEO checks: duplicate titles/descriptions across pages are detected end-to
 
 // ---------- Console errors ----------
 
-test('consoleErrors check surfaces each classified error, labels first-party vs third-party in the summary, and carries origin/reference', () => {
+test('consoleErrors splits first-party (automated candidate) from third-party (manual-review, not assumed the site\'s own defect)', () => {
   const page = makePageResult({
     consoleErrors: [
       { message: 'Internal bug', source: 'https://example.com/app.js', kind: 'uncaught', origin: 'internal' },
@@ -244,18 +244,26 @@ test('consoleErrors check surfaces each classified error, labels first-party vs 
     ],
   });
   const findings = extractFindings([page]);
-  const consoleFindings = findings.filter((f) => f.checkKey === 'consoleErrors');
-  assert.equal(consoleFindings.length, 2);
-  assert.match(consoleFindings[0].summary, /^\[internal\] Internal bug/);
-  assert.equal(consoleFindings[0].origin, 'internal');
-  assert.match(consoleFindings[1].summary, /^\[external\] Widget crashed/);
-  assert.equal(consoleFindings[1].origin, 'external');
-  assert.equal(consoleFindings[1].reference, 'https://widget.example.net/embed.js');
+
+  const internalFindings = findings.filter((f) => f.checkKey === 'consoleErrors');
+  assert.equal(internalFindings.length, 1);
+  assert.match(internalFindings[0].summary, /^\[internal\] Internal bug/);
+  assert.equal(internalFindings[0].origin, 'internal');
+  assert.equal(internalFindings[0].manualReview, false);
+  assert.equal(internalFindings[0].bucket, 'candidatesAwaitingVerification');
+
+  const externalFindings = findings.filter((f) => f.checkKey === 'consoleErrorsExternal');
+  assert.equal(externalFindings.length, 1);
+  assert.match(externalFindings[0].summary, /^\[external\] Widget crashed/);
+  assert.equal(externalFindings[0].origin, 'external');
+  assert.equal(externalFindings[0].reference, 'https://widget.example.net/embed.js');
+  assert.equal(externalFindings[0].manualReview, true);
+  assert.equal(externalFindings[0].bucket, 'externalEnvironmentIssues');
 });
 
-test('consoleErrors check produces nothing when the page result has no consoleErrors field at all', () => {
+test('consoleErrors checks produce nothing when the page result has no consoleErrors field at all', () => {
   const findings = extractFindings([makePageResult()]);
-  assert.equal(findings.filter((f) => f.checkKey === 'consoleErrors').length, 0);
+  assert.equal(findings.filter((f) => f.checkKey === 'consoleErrors' || f.checkKey === 'consoleErrorsExternal').length, 0);
 });
 
 // ---------- Infrastructure (site-level) ----------
@@ -290,7 +298,7 @@ test('listCheckTypes covers every SOW section and flags manual-review checks', (
   const checks = listCheckTypes();
   assert.ok(checks.length > 15);
   const manualKeys = checks.filter((c) => c.manualReview).map((c) => c.key);
-  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview', 'deadClicks', 'seoNoindexReview', 'infraRobotsTxtReview', 'infraHttpsReview'].sort());
+  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview', 'deadClicks', 'seoNoindexReview', 'consoleErrorsExternal', 'infraRobotsTxtReview', 'infraHttpsReview'].sort());
 });
 
 // ---------- groupFindings ----------

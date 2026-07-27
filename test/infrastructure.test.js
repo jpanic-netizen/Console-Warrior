@@ -10,6 +10,14 @@ function startServer(handler) {
   });
 }
 
+/** An origin nothing is listening on — a real fetch here fails with ECONNREFUSED, simulating a genuine network-level failure. */
+async function unreachableOrigin() {
+  const server = await startServer((req, res) => res.writeHead(200).end('ok'));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  await new Promise((r) => server.close(r));
+  return origin;
+}
+
 // ---------- robots.txt ----------
 
 test('infrastructure: a blanket "Disallow: /" is a real finding on production, silently correct on staging, and a manual-review candidate with no known environment', async (t) => {
@@ -123,4 +131,33 @@ test('infrastructure: a plain-HTTP origin is a real finding on production, a man
 
   const unknown = await auditInfrastructure(origin, {});
   assert.equal(unknown.httpsRedirect.manualReview, true);
+});
+
+// ---------- couldn't complete (network failure) vs. checked and clean ----------
+
+test('infrastructure: a genuine network failure fetching robots.txt/sitemap.xml/custom-404 is reported as checkFailed, never as a silent pass', async (t) => {
+  const origin = await unreachableOrigin();
+  const result = await auditInfrastructure(origin, { environment: 'production' });
+
+  for (const key of ['robotsTxt', 'sitemapXml', 'custom404']) {
+    assert.ok(result[key], `${key} should not be null when its request never even completed`);
+    assert.equal(result[key].checkFailed, true, `${key} should be marked checkFailed, not treated as "nothing wrong"`);
+    assert.ok(result[key].summary, `${key} should explain why it could not be verified`);
+    assert.equal(result[key].manualReview, undefined, `${key}'s checkFailed result must not also look like a manual-review candidate`);
+  }
+});
+
+test('infrastructure: an HTTPS origin whose plain-HTTP variant is unreachable is checkFailed for httpsRedirect (ambiguous, not assumed either way)', async (t) => {
+  // checkHttpsRedirect only fetches anything when the ORIGIN itself is already https: —
+  // it then probes the http:// variant to see whether it redirects. Using an origin
+  // whose host:port has nothing listening at all makes that probe fail with a real
+  // network error, regardless of https: not actually being served there either.
+  const unreachableHost = (await unreachableOrigin()).replace('http://', '');
+  const httpsOrigin = `https://${unreachableHost}`;
+
+  const result = await auditInfrastructure(httpsOrigin, { environment: 'production' });
+  assert.ok(result.httpsRedirect);
+  assert.equal(result.httpsRedirect.checkFailed, true);
+  assert.ok(result.httpsRedirect.summary);
+  assert.equal(result.httpsRedirect.manualReview, undefined);
 });
