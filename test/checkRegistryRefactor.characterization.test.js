@@ -112,6 +112,7 @@ test('totals key order now follows CHECK_DEFS (post-refactor) — axeViolations 
     'ariaNoAutocomplete',
     'ariaExpandedBad',
     'ariaDuplicateIds',
+    'brokenLinks',
   ]);
 });
 
@@ -184,7 +185,7 @@ test('extractFindings: exact finding count, sequential ids, and CHECK_DEFS-drive
   assert.equal(manualFinding.manualReview, true);
 });
 
-test('listCheckTypes: unchanged set, order, and manualReview flags', () => {
+test('listCheckTypes: set, order, and manualReview flags (grows as Phase 1 checks are added — this is the running record, not a frozen snapshot)', () => {
   const types = listCheckTypes();
   assert.deepEqual(
     types.map((t) => t.key),
@@ -193,10 +194,11 @@ test('listCheckTypes: unchanged set, order, and manualReview flags', () => {
       'focusableButHidden', 'focusNoIndicator', 'focusWeakIndicator', 'altMissingAttr', 'altFilenameAsAlt',
       'altLinkedNoName', 'altReviewEmptyAlt', 'headingSkips', 'headingMissingTitle', 'headingMultipleH1',
       'ariaNoName', 'ariaLabelInName', 'ariaInputNoLabel', 'ariaNoAutocomplete', 'ariaExpandedBad', 'ariaDuplicateIds',
+      'brokenLinks', 'brokenLinksExternalReview',
     ]
   );
   const manualKeys = types.filter((t) => t.manualReview).map((t) => t.key);
-  assert.deepEqual(manualKeys, ['contrastManualReview', 'altReviewEmptyAlt']);
+  assert.deepEqual(manualKeys, ['contrastManualReview', 'altReviewEmptyAlt', 'brokenLinksExternalReview']);
 });
 
 test('CLI "Total flagged findings" arithmetic (Object.values(totals) sum) is order-independent and unchanged', () => {

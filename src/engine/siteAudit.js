@@ -51,7 +51,7 @@ export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPag
       const context = await newAuditContext(browser, viewport);
       if (ssrf) await installSsrfGuard(context, ssrf);
       try {
-        const result = await auditPage(context, url, { outDir });
+        const result = await auditPage(context, url, { outDir, ssrf });
         if (onPageDone) onPageDone(result);
         return result;
       } catch (e) {

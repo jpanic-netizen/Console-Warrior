@@ -270,6 +270,37 @@ export const CHECK_DEFS = [
     manualReview: false,
     items: (r) => r.aria.duplicateIds.map((id) => ({ summary: `Duplicate id="${id}"` })),
   },
+  {
+    key: 'brokenLinks',
+    section: '7 · Broken links',
+    label: 'Broken link',
+    severity: 'serious',
+    manualReview: false,
+    items: (r) =>
+      (r.linkResolution?.broken || [])
+        .filter((b) => !b.manualReview)
+        .map((b) => ({
+          summary: `"${truncate(b.text, 50)}" → ${truncate(b.href, 70)} (${b.status !== null ? `HTTP ${b.status}` : b.networkError})`,
+          screenshot: b.screenshot,
+          origin: b.origin,
+          reference: b.reference,
+        })),
+  },
+  {
+    key: 'brokenLinksExternalReview',
+    section: '7 · Broken links',
+    label: 'External link — verify before reporting (SOP §6: automation may be blocked)',
+    manualReview: true,
+    items: (r) =>
+      (r.linkResolution?.broken || [])
+        .filter((b) => b.manualReview)
+        .map((b) => ({
+          summary: `"${truncate(b.text, 50)}" → ${truncate(b.href, 70)} (${b.status !== null ? `HTTP ${b.status}` : b.networkError}) — confirm in a real browser before calling it broken`,
+          screenshot: b.screenshot,
+          origin: b.origin,
+          reference: b.reference,
+        })),
+  },
 ];
 
 /**
