@@ -201,6 +201,38 @@ test('groupFindings never merges across different checks or severities even with
   assert.equal(groups.length, new Set(relabelled.map((f) => f.checkKey)).size);
 });
 
+test('groupFindings is presentation-only: every raw finding is still reachable through some group, with its own evidence intact', () => {
+  // Guards the exact property the dashboard's grouped/raw toggle relies on —
+  // collapsing repeated findings must never drop a finding or its
+  // screenshot, only change how many cards render for the same data.
+  const pages = ['https://example.com/', 'https://example.com/about', 'https://example.com/contact', 'https://example.com/pricing'].map((url, i) =>
+    makePageResult({
+      url,
+      aria: { noName: [], labelInName: [], inputNoLabel: [], noAutocomplete: [], ariaExpandedBad: [], duplicateIds: ['shared-footer-id'] },
+      contrast: {
+        failures: [{ id: `c${i}`, text: `Distinct contrast issue ${i}`, ratio: 2, needed: 4.5, screenshot: `/out/c${i}.png` }],
+        manualReview: [],
+      },
+    })
+  );
+  const findings = extractFindings(pages);
+  const groups = groupFindings(findings);
+
+  const totalFromGroups = groups.reduce((sum, g) => sum + g.instanceCount, 0);
+  assert.equal(totalFromGroups, findings.length, 'sum of every group.instanceCount must equal the raw finding count');
+
+  const instancesFromGroups = groups.flatMap((g) => g.instances);
+  assert.equal(instancesFromGroups.length, findings.length, 'every group.instances array together must total the raw finding count');
+
+  const rawIds = new Set(findings.map((f) => f.id));
+  const groupedIds = new Set(instancesFromGroups.map((i) => i.id));
+  assert.deepEqual(groupedIds, rawIds, 'grouping must not drop or duplicate any raw finding id');
+
+  const rawScreenshots = new Set(findings.map((f) => f.screenshot).filter(Boolean));
+  const groupedScreenshots = new Set(instancesFromGroups.map((i) => i.screenshot).filter(Boolean));
+  assert.deepEqual(groupedScreenshots, rawScreenshots, 'grouping must not drop any finding\'s screenshot evidence');
+});
+
 // ---------- summarizeBreakdown ----------
 
 test('summarizeBreakdown tallies severity, check, and page dimensions independently', () => {
