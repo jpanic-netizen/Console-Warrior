@@ -90,9 +90,10 @@ function comprehensivePageResult(url, n) {
 
 const FIXTURE = [comprehensivePageResult('https://example.com/a', 2), comprehensivePageResult('https://example.com/b', 1), comprehensivePageResult('https://example.com/clean', 0)];
 
-test('documents pre-refactor totals key order (expected to change post-refactor — see file header)', () => {
+test('totals key order now follows CHECK_DEFS (post-refactor) — axeViolations first, matching finding ids and listCheckTypes, not the old hand-typed order that had it last', () => {
   const summary = buildSummary(FIXTURE);
   assert.deepEqual(Object.keys(summary.totals), [
+    'axeViolations',
     'contrastFailures',
     'keyboardInvisibleFocus',
     'dropdownFailures',
@@ -111,7 +112,6 @@ test('documents pre-refactor totals key order (expected to change post-refactor 
     'ariaNoAutocomplete',
     'ariaExpandedBad',
     'ariaDuplicateIds',
-    'axeViolations',
   ]);
 });
 

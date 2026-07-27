@@ -3,8 +3,13 @@
  * already produce) into one finding-per-instance list, for UIs that need to
  * filter/browse individual findings rather than read the aggregated counts
  * buildSummary() produces. This is a read-only derived view — it does not
- * change what any check computes, and buildSummary()/the HTML/DOCX renderers
- * are unaffected by it.
+ * change what any check computes.
+ *
+ * CHECK_DEFS below is the single source of truth for "what checks exist and
+ * how to read their raw fields" — both this file's extractFindings() and
+ * buildSummary.js's totals/perCheckPages derive from it, so a new check only
+ * ever needs to be listed here once. Adding a check here automatically makes
+ * it show up in reports and dashboard totals; there is nowhere else to edit.
  */
 
 export const SEVERITIES = ['critical', 'serious', 'moderate', 'minor'];
@@ -24,7 +29,7 @@ function normalizeAxeImpact(impact) {
  * `severity` here is a fixed default; `axeViolations` overrides it per-item
  * from axe's own `impact` field since axe already grades that per rule.
  */
-const CHECK_DEFS = [
+export const CHECK_DEFS = [
   {
     key: 'axeViolations',
     section: '0 · Axe baseline',
