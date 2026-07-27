@@ -463,6 +463,18 @@ export const CHECK_DEFS = [
         ? [{ summary: `<meta name="robots" content="${r.seo.robotsMeta}"> — normal on staging, a problem on production; confirm which this is` }]
         : [],
   },
+  {
+    key: 'placeholderText',
+    section: '11 · Placeholder text',
+    label: 'Unreplaced placeholder text',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) =>
+      (r.placeholderText?.found || []).map((p) => ({
+        summary: `${p.tag}: "${truncate(p.text, 60)}" looks like unreplaced placeholder text (${p.pattern})`,
+        screenshot: p.screenshot,
+      })),
+  },
 ];
 
 /**
