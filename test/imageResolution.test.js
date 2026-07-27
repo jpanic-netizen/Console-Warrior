@@ -85,13 +85,21 @@ test('auditImageResolution: internal 404 image is a plain (non-manual-review) ca
   });
 });
 
-test('auditImageResolution: a 200 response that fails to actually decode is still reported broken', async (t) => {
+test('auditImageResolution: a 200 response that fails to actually decode is reported, but only as a manual-review candidate, never an automated confirmed defect', async (t) => {
   await withImagesPage(t, async (page) => {
     const result = await auditImageResolution(page, { allowHosts: ['127.0.0.1'] });
     const corrupt = result.broken.find((b) => b.href.endsWith('/corrupt.png'));
     assert.ok(corrupt, 'a 200 status alone must not be enough to call an image working');
     assert.equal(corrupt.status, 200);
     assert.equal(corrupt.renderedOk, false);
+    // httpOk-but-not-rendered is inherently ambiguous from this data alone — it
+    // could be genuinely corrupt bytes, or it could be a carousel/slider slide
+    // that never entered the viewport for the browser's own lazy-load logic to
+    // trigger (scrolling the outer PAGE doesn't scroll a clipped inner track).
+    // Never assume the worse interpretation automatically — always a candidate
+    // for a human to actually look at.
+    assert.equal(corrupt.manualReview, true);
+    assert.equal(corrupt.reviewReason, 'subjective');
   });
 });
 
@@ -109,6 +117,7 @@ test('auditImageResolution: external 403 is a manual-review candidate, external 
 
     const blocked = result.broken.find((b) => b.href.includes('/external-403'));
     assert.equal(blocked.manualReview, true);
+    assert.equal(blocked.reviewReason, 'external-blocked');
     assert.equal(blocked.origin, 'external');
 
     const genuinelyMissing = result.broken.find((b) => b.href.includes('/external-404'));
@@ -122,4 +131,49 @@ test('auditImageResolution: external 403 is a manual-review candidate, external 
     assert.equal(metadata.status, null, 'no HTTP request should have been attempted');
     assert.match(metadata.networkError, /private|internal/i);
   });
+});
+
+test('auditImageResolution: a real, valid image whose render is simply slower than the wait window is a manual-review candidate, never an automated confirmed defect', async (t) => {
+  // Found via a real OutSail regression run: dozens of genuinely valid CDN
+  // images (HTTP 200, real image bytes) came back renderedOk:false — some
+  // reason short of a true 404/corrupt-data defect kept the <img>'s own
+  // load event from firing inside the wait window (a slow/large asset, a
+  // carousel slide never scrolled to, whatever it was). Reproduced here
+  // deterministically: the image response is delayed past waitForRender's
+  // 4s window, so the <img> load event hasn't fired when we check — but a
+  // fresh, separate HTTP request (the actual broken-vs-working check) still
+  // gets a normal 200 well within its own 10s timeout, since by then the
+  // delay has already elapsed.
+  const external = await startServer((req, res) => res.writeHead(404).end());
+  t.after(() => new Promise((r) => external.close(r)));
+  const main = await startServer((req, res) => {
+    if (req.url === '/slow.png') {
+      setTimeout(() => res.writeHead(200, { 'Content-Type': 'image/png' }).end(VALID_PNG), 4500);
+      return;
+    }
+    if (req.url === '/') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      return res.end(`<!doctype html><html><body style="margin:0"><img src="/slow.png" alt="Slow-loading image"></body></html>`);
+    }
+    res.writeHead(404).end();
+  });
+  t.after(() => new Promise((r) => main.close(r)));
+  const mainOrigin = `http://127.0.0.1:${main.address().port}`;
+
+  const browser = await launchBrowser();
+  t.after(() => browser.close());
+  const context = await newAuditContext(browser);
+  const page = await context.newPage();
+  // Don't wait for networkidle here — the slow image would block it for
+  // 4.5s, and this test is specifically about auditing before that resolves.
+  await page.goto(`${mainOrigin}/`, { waitUntil: 'domcontentloaded' });
+  await installDomHelpers(page);
+
+  const result = await auditImageResolution(page, { allowHosts: ['127.0.0.1'] });
+  const slow = result.broken.find((b) => b.href.endsWith('/slow.png'));
+  assert.ok(slow, 'a real, working image that simply hadn\'t finished rendering yet must still be surfaced — just not as a confirmed defect');
+  assert.equal(slow.status, 200);
+  assert.equal(slow.renderedOk, false);
+  assert.equal(slow.manualReview, true, 'httpOk-but-not-rendered must never be an automated confirmed "broken image"');
+  assert.equal(slow.reviewReason, 'subjective');
 });

@@ -388,11 +388,27 @@ export const CHECK_DEFS = [
     reviewReason: 'external-blocked',
     items: (r) =>
       (r.imageResolution?.broken || [])
-        .filter((b) => b.manualReview)
+        .filter((b) => b.manualReview && b.reviewReason === 'external-blocked')
         .map((b) => ({
           summary: `"${truncate(b.alt || '(no alt text)', 40)}" → ${truncate(b.href, 70)} (${
             b.status !== null ? `HTTP ${b.status}` : b.networkError
           }) — confirm in a real browser before calling it broken`,
+          screenshot: b.screenshot,
+          origin: b.origin,
+          reference: b.reference,
+        })),
+  },
+  {
+    key: 'brokenImagesRenderReview',
+    section: '8 · Broken images',
+    label: 'Image loaded but did not visibly render — confirm in a real browser (may be a carousel/slider slide never scrolled to)',
+    manualReview: true,
+    reviewReason: 'subjective',
+    items: (r) =>
+      (r.imageResolution?.broken || [])
+        .filter((b) => b.manualReview && b.reviewReason === 'subjective')
+        .map((b) => ({
+          summary: `"${truncate(b.alt || '(no alt text)', 40)}" → ${truncate(b.href, 70)} (HTTP ${b.status}, but never rendered — could be a carousel slide off-screen, not necessarily broken)`,
           screenshot: b.screenshot,
           origin: b.origin,
           reference: b.reference,

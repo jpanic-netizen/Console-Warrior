@@ -208,14 +208,14 @@ test('listCheckTypes: set, order, and manualReview flags (grows as Phase 1 check
       'focusableButHidden', 'focusNoIndicator', 'focusWeakIndicator', 'altMissingAttr', 'altFilenameAsAlt',
       'altLinkedNoName', 'altReviewEmptyAlt', 'headingSkips', 'headingMissingTitle', 'headingMultipleH1',
       'ariaNoName', 'ariaLabelInName', 'ariaInputNoLabel', 'ariaNoAutocomplete', 'ariaExpandedBad', 'ariaDuplicateIds',
-      'brokenLinks', 'brokenLinksExternalReview', 'brokenImages', 'brokenImagesExternalReview', 'deadClicks',
+      'brokenLinks', 'brokenLinksExternalReview', 'brokenImages', 'brokenImagesExternalReview', 'brokenImagesRenderReview', 'deadClicks',
       'seoMissingH1', 'seoMissingDescription', 'seoMissingCanonical', 'seoMissingOpenGraph', 'seoMissingTwitterCard',
       'seoDuplicateTitle', 'seoDuplicateDescription', 'seoNoindexReview', 'placeholderText', 'consoleErrors', 'consoleErrorsExternal',
       'infraRobotsTxt', 'infraRobotsTxtReview', 'infraSitemapXml', 'infraCustom404', 'infraHttps', 'infraHttpsReview',
     ]
   );
   const manualKeys = types.filter((t) => t.manualReview).map((t) => t.key);
-  assert.deepEqual(manualKeys, ['contrastManualReview', 'altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'deadClicks', 'seoNoindexReview', 'consoleErrorsExternal', 'infraRobotsTxtReview', 'infraHttpsReview']);
+  assert.deepEqual(manualKeys, ['contrastManualReview', 'altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'brokenImagesRenderReview', 'deadClicks', 'seoNoindexReview', 'consoleErrorsExternal', 'infraRobotsTxtReview', 'infraHttpsReview']);
 });
 
 test('CLI "Total flagged findings" arithmetic (Object.values(totals) sum) is order-independent and unchanged', () => {

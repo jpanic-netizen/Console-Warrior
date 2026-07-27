@@ -111,6 +111,17 @@ export async function auditImageResolution(page, opts = {}) {
     if (httpOk && renderedOk) continue;
 
     const looksAutomationBlocked = isExternal && (networkError !== null || AUTOMATION_BLOCK_STATUSES.has(status));
+    // httpOk-but-not-rendered is genuinely ambiguous from this data alone:
+    // it can mean truly corrupt image bytes, but it can equally mean the
+    // <img>'s own load event just hadn't fired yet within waitForRender's
+    // wait window (a large/slow asset, a carousel slide the outer page's
+    // scrollIntoViewIfNeeded() can't reach because it's clipped/positioned
+    // by an inner, non-scrollable track, etc.) — seen on a real regression
+    // run as a run of otherwise-valid CDN images all reporting this way.
+    // Automation has no way to tell those apart without clicking/waiting
+    // indefinitely (out of scope — no interaction, no unbounded waits), so
+    // never assume the worse case; leave it for a human to actually look at.
+    const renderUnconfirmed = httpOk && !renderedOk;
     broken.push({
       id: image.id,
       href: image.href,
@@ -119,7 +130,8 @@ export async function auditImageResolution(page, opts = {}) {
       networkError,
       renderedOk,
       isExternal,
-      manualReview: looksAutomationBlocked,
+      manualReview: looksAutomationBlocked || renderUnconfirmed,
+      reviewReason: looksAutomationBlocked ? 'external-blocked' : renderUnconfirmed ? 'subjective' : null,
       origin: isExternal ? 'external' : 'internal',
       reference: image.href,
     });
