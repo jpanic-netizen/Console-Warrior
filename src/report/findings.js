@@ -14,6 +14,33 @@
 
 export const SEVERITIES = ['critical', 'serious', 'moderate', 'minor'];
 
+/**
+ * VAN QA SOP severity taxonomy (Blocker/High/Medium/Low), display-only —
+ * the internal critical/serious/moderate/minor vocabulary above is axe-core's
+ * own and stays exactly as-is everywhere it's used for sorting/grouping.
+ *
+ * A check's own `suggestedSeverity` is capped at "High": only a human can
+ * know whether something actually blocks launch or a core journey (the SOP's
+ * own definition of Blocker), so no automated check is ever allowed to
+ * self-assign it — "critical" and "serious" both cap at "High" here.
+ */
+export const SOP_SEVERITIES = ['Low', 'Medium', 'High', 'Blocker'];
+
+const SOP_SEVERITY_BY_INTERNAL = {
+  critical: 'High',
+  serious: 'High',
+  moderate: 'Medium',
+  minor: 'Low',
+};
+
+/** Null in, null out: a finding with no internal severity (manual-review
+ * items today) gets no automated suggestion either — the tool declines to
+ * guess rather than invent one. */
+export function suggestSopSeverity(internalSeverity) {
+  if (!internalSeverity) return null;
+  return SOP_SEVERITY_BY_INTERNAL[internalSeverity] || 'Medium';
+}
+
 function truncate(s, n = 90) {
   const str = String(s ?? '').trim();
   return str.length > n ? `${str.slice(0, n)}…` : str;
@@ -247,7 +274,17 @@ export const CHECK_DEFS = [
 
 /**
  * @param {Array} pageResults - the array auditSite() resolves with (one entry per URL).
- * @returns {Array} flat list of { id, page, slug, section, checkKey, checkLabel, severity, manualReview, summary, screenshot, fullPageScreenshot }
+ * @returns {Array} flat list of { id, page, slug, section, checkKey, checkLabel, severity,
+ *   suggestedSeverity, confirmedSeverity, manualReview, verificationStatus, classification,
+ *   reproducible, origin, reference, summary, screenshot, fullPageScreenshot }
+ *
+ * suggestedSeverity/confirmedSeverity, verificationStatus, and classification encode the
+ * SOP's phase-6 triage gate as data rather than prose: every finding a check produces
+ * starts as a `'candidate'` with no classification and no confirmedSeverity — "automated
+ * output is a candidate list, not a finding list" (SOP §11). Nothing here promotes a
+ * finding to `'verified'` or assigns a classification/confirmedSeverity automatically;
+ * those are set only by an explicit human action (the Phase 2 dashboard triage workflow
+ * this schema exists ahead of, so that workflow never needs a second data migration).
  */
 export function extractFindings(pageResults) {
   const findings = [];
@@ -258,6 +295,7 @@ export function extractFindings(pageResults) {
       const items = def.items(r) || [];
       for (const item of items) {
         seq += 1;
+        const severity = item.severity || def.severity || null;
         findings.push({
           id: `f${seq}`,
           page: r.url,
@@ -265,8 +303,15 @@ export function extractFindings(pageResults) {
           section: def.section,
           checkKey: def.key,
           checkLabel: def.label,
-          severity: item.severity || def.severity || null,
+          severity,
+          suggestedSeverity: def.manualReview ? null : suggestSopSeverity(severity),
+          confirmedSeverity: null,
           manualReview: !!def.manualReview,
+          verificationStatus: 'candidate',
+          classification: null,
+          reproducible: null,
+          origin: item.origin || 'internal',
+          reference: item.reference || null,
           summary: item.summary,
           screenshot: item.screenshot || null,
           fullPageScreenshot: r.fullPageScreenshot || null,

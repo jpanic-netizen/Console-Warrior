@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractFindings, listCheckTypes, groupFindings, summarizeBreakdown, SEVERITIES } from '../src/report/findings.js';
+import { extractFindings, listCheckTypes, groupFindings, summarizeBreakdown, SEVERITIES, SOP_SEVERITIES, suggestSopSeverity } from '../src/report/findings.js';
 import { sortFindings, searchFindings, defaultSortDir } from '../src/report/sortSearch.js';
 
 /** Minimal but structurally complete synthetic page result, matching what auditPage() produces. */
@@ -71,7 +71,39 @@ test('extractFindings keeps manual-review items out of severity buckets', () => 
   assert.equal(findings.length, 2);
   assert.ok(findings.every((f) => f.manualReview === true));
   assert.ok(findings.every((f) => f.severity === null));
+  assert.ok(findings.every((f) => f.suggestedSeverity === null), 'manual-review items get no automated severity suggestion at all');
 });
+
+// ---------- SOP severity mapping + candidate/triage fields ----------
+
+test('suggestSopSeverity caps critical and serious at "High" — never "Blocker", which requires human judgement of launch/journey impact', () => {
+  assert.equal(suggestSopSeverity('critical'), 'High');
+  assert.equal(suggestSopSeverity('serious'), 'High');
+  assert.equal(suggestSopSeverity('moderate'), 'Medium');
+  assert.equal(suggestSopSeverity('minor'), 'Low');
+  assert.equal(suggestSopSeverity(null), null);
+  for (const internal of SEVERITIES) {
+    assert.notEqual(suggestSopSeverity(internal), 'Blocker', `${internal} must never auto-suggest Blocker`);
+  }
+  assert.ok(SOP_SEVERITIES.includes('Blocker'), 'Blocker is still a valid confirmedSeverity value — just never an automated suggestion');
+});
+
+test('extractFindings: every finding starts life as an untriaged candidate with a suggested-vs-confirmed severity split', () => {
+  const page = makePageResult({
+    contrast: { failures: [{ id: 'c1', text: 'Low contrast', ratio: 2.1, needed: 4.5, screenshot: null }], manualReview: [] },
+  });
+  const findings = extractFindings([page]);
+  const f = findings[0];
+  assert.equal(f.severity, 'serious'); // internal vocabulary, unchanged
+  assert.equal(f.suggestedSeverity, 'High'); // SOP-mapped, capped
+  assert.equal(f.confirmedSeverity, null); // only a human sets this, later
+  assert.equal(f.verificationStatus, 'candidate');
+  assert.equal(f.classification, null);
+  assert.equal(f.reproducible, null);
+  assert.equal(f.origin, 'internal');
+  assert.equal(f.reference, null);
+});
+
 
 test('extractFindings takes axe severity from axe\'s own impact field, not a fixed default', () => {
   const page = makePageResult({
