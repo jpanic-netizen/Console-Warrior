@@ -276,3 +276,114 @@ export function extractFindings(pageResults) {
 export function listCheckTypes() {
   return CHECK_DEFS.map((d) => ({ key: d.key, section: d.section, label: d.label, manualReview: !!d.manualReview }));
 }
+
+/**
+ * Collapses findings that are effectively the same instance repeated across
+ * pages — the common case being a shared header/nav/footer element that
+ * trips the same check with the same message on every page. Two findings
+ * group together when they share a check, severity, and summary text
+ * exactly; genuinely page-specific findings (different text, different
+ * ratio, different element) just end up in their own group of one.
+ *
+ * Sorted by pages-affected descending by default, since that's the useful
+ * "what's the shared problem worth fixing once" ordering — a caller that
+ * wants a different order can re-sort the returned array.
+ */
+export function groupFindings(findings) {
+  const groups = new Map();
+  let seq = 0;
+  for (const f of findings) {
+    const key = `${f.checkKey}::${f.severity ?? 'none'}::${f.summary}`;
+    let g = groups.get(key);
+    if (!g) {
+      seq += 1;
+      g = {
+        id: `g${seq}`,
+        checkKey: f.checkKey,
+        checkLabel: f.checkLabel,
+        section: f.section,
+        severity: f.severity,
+        manualReview: f.manualReview,
+        summary: f.summary,
+        pageSet: new Set(),
+        instances: [],
+      };
+      groups.set(key, g);
+    }
+    g.instances.push(f);
+    g.pageSet.add(f.page);
+  }
+  return [...groups.values()]
+    .map((g) => ({
+      id: g.id,
+      checkKey: g.checkKey,
+      checkLabel: g.checkLabel,
+      section: g.section,
+      severity: g.severity,
+      manualReview: g.manualReview,
+      summary: g.summary,
+      pageCount: g.pageSet.size,
+      instanceCount: g.instances.length,
+      pages: [...g.pageSet].sort(),
+      instances: g.instances.map((f) => ({
+        id: f.id,
+        page: f.page,
+        screenshot: f.screenshot,
+        fullPageScreenshot: f.fullPageScreenshot,
+      })),
+    }))
+    .sort((a, b) => b.pageCount - a.pageCount || b.instanceCount - a.instanceCount);
+}
+
+const SEVERITY_BUCKETS = ['critical', 'serious', 'moderate', 'minor', 'manual'];
+
+/**
+ * Aggregate counts for the dashboard's breakdown views: by severity
+ * (manual-review kept as its own bucket, never folded into a severity),
+ * by check type (with distinct pages affected), and by page (automated vs.
+ * manual, plus a severity split) — everything the four headline KPIs don't
+ * show on their own.
+ */
+export function summarizeBreakdown(findings) {
+  const bySeverity = Object.fromEntries(SEVERITY_BUCKETS.map((k) => [k, 0]));
+  const byCheckMap = new Map();
+  const byPageMap = new Map();
+
+  for (const f of findings) {
+    const severityBucket = f.manualReview ? 'manual' : f.severity || 'moderate';
+    bySeverity[severityBucket] = (bySeverity[severityBucket] || 0) + 1;
+
+    if (!byCheckMap.has(f.checkKey)) {
+      byCheckMap.set(f.checkKey, {
+        checkKey: f.checkKey,
+        checkLabel: f.checkLabel,
+        section: f.section,
+        manualReview: f.manualReview,
+        count: 0,
+        pages: new Set(),
+      });
+    }
+    const check = byCheckMap.get(f.checkKey);
+    check.count += 1;
+    check.pages.add(f.page);
+
+    if (!byPageMap.has(f.page)) {
+      byPageMap.set(f.page, { page: f.page, automated: 0, manual: 0, critical: 0, serious: 0, moderate: 0, minor: 0 });
+    }
+    const page = byPageMap.get(f.page);
+    if (f.manualReview) {
+      page.manual += 1;
+    } else {
+      page.automated += 1;
+      const bucket = f.severity || 'moderate';
+      page[bucket] = (page[bucket] || 0) + 1;
+    }
+  }
+
+  const byCheck = [...byCheckMap.values()]
+    .map((c) => ({ ...c, pages: c.pages.size }))
+    .sort((a, b) => b.count - a.count);
+  const byPage = [...byPageMap.values()].sort((a, b) => b.automated + b.manual - (a.automated + a.manual));
+
+  return { bySeverity, byCheck, byPage };
+}

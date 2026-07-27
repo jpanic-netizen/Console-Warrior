@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import crypto from 'node:crypto';
 import url from 'node:url';
 import express from 'express';
 import { ZipArchive } from 'archiver';
@@ -12,8 +13,12 @@ import {
   listJobs,
   jobToJSON,
   getJobFindings,
+  hasActiveJob,
+  LIMITS,
 } from './jobManager.js';
-import { listCheckTypes } from '../report/findings.js';
+import { listCheckTypes, groupFindings, summarizeBreakdown } from '../report/findings.js';
+import { sortFindings, searchFindings, defaultSortDir } from '../report/sortSearch.js';
+import { checkTargetSafety } from '../engine/ssrfGuard.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', '..', 'web');
@@ -31,14 +36,65 @@ function rewriteFindingShots(jobId, findings) {
   }));
 }
 
+function rewriteGroupShots(jobId, groups) {
+  return groups.map((g) => ({ ...g, instances: rewriteFindingShots(jobId, g.instances) }));
+}
+
+/**
+ * Read live (not cached at import time — see jobManager's outputRoot() for
+ * why that matters) so tests can flip it per-process before making
+ * requests. Sanctioned only for automated testing against the local
+ * fixture server; never set this in a real deployment.
+ */
+function allowPrivateTargets() {
+  return process.env.DASHBOARD_ALLOW_PRIVATE_TARGETS === 'true';
+}
+
+/**
+ * HTTP Basic Auth, active only when both env vars are set. Deliberately
+ * fails closed: if only one of the pair is set, every request is rejected
+ * rather than silently running unauthenticated — a half-configured secret
+ * is a misconfiguration, not an opt-out.
+ */
+function basicAuthMiddleware() {
+  const user = process.env.DASHBOARD_USERNAME;
+  const pass = process.env.DASHBOARD_PASSWORD;
+  if (!user && !pass) return (req, res, next) => next();
+
+  return (req, res, next) => {
+    if (!user || !pass) {
+      res.status(500).json({ error: 'Server misconfigured: only one of DASHBOARD_USERNAME/DASHBOARD_PASSWORD is set.' });
+      return;
+    }
+    const header = req.headers.authorization || '';
+    const [scheme, encoded] = header.split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      const sep = decoded.indexOf(':');
+      const reqUser = sep === -1 ? decoded : decoded.slice(0, sep);
+      const reqPass = sep === -1 ? '' : decoded.slice(sep + 1);
+      const userOk = reqUser.length === user.length && crypto.timingSafeEqual(Buffer.from(reqUser), Buffer.from(user));
+      const passOk = reqPass.length === pass.length && crypto.timingSafeEqual(Buffer.from(reqPass), Buffer.from(pass));
+      if (userOk && passOk) return next();
+    }
+    res.set('WWW-Authenticate', 'Basic realm="Console Warrior Dashboard"');
+    res.status(401).send('Authentication required.');
+  };
+}
+
 export function createApp() {
   const app = express();
+  app.use(basicAuthMiddleware());
   app.use(express.json());
 
   app.use(express.static(WEB_DIR));
 
   app.get('/api/checks', (req, res) => {
     res.json(listCheckTypes());
+  });
+
+  app.get('/api/limits', (req, res) => {
+    res.json(LIMITS);
   });
 
   app.get('/api/presets', async (req, res) => {
@@ -65,7 +121,7 @@ export function createApp() {
     res.json(listJobs());
   });
 
-  app.post('/api/audits', (req, res) => {
+  app.post('/api/audits', async (req, res) => {
     const { siteName, urls, viewport, concurrency } = req.body || {};
     const cleanUrls = Array.isArray(urls)
       ? urls.map((u) => String(u).trim()).filter(Boolean)
@@ -74,20 +130,50 @@ export function createApp() {
       res.status(400).json({ error: 'At least one URL is required.' });
       return;
     }
-    for (const u of cleanUrls) {
-      try {
-        // eslint-disable-next-line no-new
-        new URL(u);
-      } catch {
-        res.status(400).json({ error: `Not a valid URL: ${u}` });
-        return;
+    if (cleanUrls.length > LIMITS.maxPages) {
+      res.status(400).json({ error: `Too many pages: ${cleanUrls.length} requested, ${LIMITS.maxPages} allowed per run.` });
+      return;
+    }
+    const requestedConcurrency = Number(concurrency) > 0 ? Number(concurrency) : 3;
+    if (requestedConcurrency > LIMITS.maxConcurrency) {
+      res.status(400).json({ error: `Concurrency ${requestedConcurrency} exceeds the maximum of ${LIMITS.maxConcurrency}.` });
+      return;
+    }
+
+    if (hasActiveJob()) {
+      res.status(409).json({ error: 'An audit is already running. Cancel it or wait for it to finish before starting another.' });
+      return;
+    }
+
+    const skipSsrfCheck = allowPrivateTargets();
+    if (!skipSsrfCheck) {
+      for (const u of cleanUrls) {
+        // eslint-disable-next-line no-await-in-loop
+        const result = await checkTargetSafety(u);
+        if (!result.ok) {
+          res.status(400).json({ error: result.reason });
+          return;
+        }
+      }
+    } else {
+      // Still reject garbage URLs even with the private-target check bypassed for testing.
+      for (const u of cleanUrls) {
+        try {
+          // eslint-disable-next-line no-new
+          new URL(u);
+        } catch {
+          res.status(400).json({ error: `Not a valid URL: ${u}` });
+          return;
+        }
       }
     }
+
     const job = createJob({
       siteName: siteName && String(siteName).trim(),
       urls: cleanUrls,
       viewport: viewport && viewport.width && viewport.height ? viewport : null,
-      concurrency: Number(concurrency) > 0 ? Number(concurrency) : 3,
+      concurrency: requestedConcurrency,
+      ssrf: skipSsrfCheck ? null : {},
     });
     startJob(job);
     res.status(201).json(jobToJSON(job));
@@ -158,21 +244,44 @@ export function createApp() {
     res.json(job.summary);
   });
 
+  app.get('/api/audits/:id/breakdown', (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    const all = getJobFindings(req.params.id);
+    if (!all) return res.status(202).json({ status: job.status, message: 'Breakdown not ready yet.' });
+    res.json(summarizeBreakdown(all));
+  });
+
   app.get('/api/audits/:id/findings', (req, res) => {
     const job = getJob(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     const all = getJobFindings(req.params.id);
     if (!all) return res.status(202).json({ status: job.status, message: 'Findings not ready yet.' });
 
+    const { page, check, severity, manualReview, q, grouped, sortBy, sortDir, limit, offset } = req.query;
+
     let findings = all;
-    const { page, check, severity, manualReview } = req.query;
     if (page) findings = findings.filter((f) => f.page === page);
     if (check) findings = findings.filter((f) => f.checkKey === check);
     if (severity) findings = findings.filter((f) => f.severity === severity);
     if (manualReview === 'true') findings = findings.filter((f) => f.manualReview);
     if (manualReview === 'false') findings = findings.filter((f) => !f.manualReview);
+    findings = searchFindings(findings, q);
 
-    res.json(rewriteFindingShots(job.id, findings));
+    const isGrouped = grouped === 'true';
+    let items = isGrouped ? groupFindings(findings) : findings;
+
+    const effectiveSortBy = sortBy || (isGrouped ? 'pageCount' : 'severity');
+    const effectiveSortDir = sortDir || defaultSortDir(effectiveSortBy);
+    items = sortFindings(items, effectiveSortBy, effectiveSortDir);
+
+    const total = items.length;
+    const limitNum = Math.min(Math.max(Number(limit) || 50, 1), 500);
+    const offsetNum = Math.max(Number(offset) || 0, 0);
+    const pageItems = items.slice(offsetNum, offsetNum + limitNum);
+
+    const rewritten = isGrouped ? rewriteGroupShots(job.id, pageItems) : rewriteFindingShots(job.id, pageItems);
+    res.json({ total, offset: offsetNum, limit: limitNum, grouped: isGrouped, items: rewritten });
   });
 
   const DOWNLOADS = {

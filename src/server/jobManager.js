@@ -19,6 +19,24 @@ function outputRoot() {
 }
 const jobs = new Map();
 
+/**
+ * Deployment-safety limits, all env-overridable so an operator can tune them
+ * without a code change. Defaults are conservative for a shared/public
+ * deployment rather than tuned for maximum throughput.
+ */
+export const LIMITS = {
+  maxPages: Number(process.env.DASHBOARD_MAX_PAGES) || 60,
+  maxConcurrency: Number(process.env.DASHBOARD_MAX_CONCURRENCY) || 8,
+  jobTimeoutMs: (Number(process.env.DASHBOARD_JOB_TIMEOUT_MINUTES) || 45) * 60_000,
+  retentionDays: Number(process.env.DASHBOARD_RETENTION_DAYS) || 14,
+  retentionMaxJobs: Number(process.env.DASHBOARD_RETENTION_MAX_JOBS) || 100,
+};
+
+/** True if some job is currently pending or running — used to refuse a second concurrent audit. */
+export function hasActiveJob() {
+  return [...jobs.values()].some((j) => j.status === 'pending' || j.status === 'running');
+}
+
 function jobToJSON(job) {
   return {
     id: job.id,
@@ -59,7 +77,7 @@ async function persistManifest(job) {
   await fs.writeFile(path.join(job.outDir, 'job.json'), JSON.stringify(manifest, null, 2)).catch(() => {});
 }
 
-export function createJob({ siteName, urls, viewport, concurrency }) {
+export function createJob({ siteName, urls, viewport, concurrency, ssrf }) {
   const name = siteName || 'Accessibility Audit';
   const id = `${slugify(name)}-${timestampSlug()}`;
   const outDir = path.join(outputRoot(), id);
@@ -69,6 +87,7 @@ export function createJob({ siteName, urls, viewport, concurrency }) {
     urls,
     viewport: viewport || null,
     concurrency: concurrency || 3,
+    ssrf: ssrf || null,
     outDir,
     status: 'pending',
     createdAt: Date.now(),
@@ -100,6 +119,17 @@ export async function runJob(job) {
   await persistManifest(job);
   emit(job, { type: 'status', status: 'running' });
 
+  // A stuck or unexpectedly slow run (a hung navigation, a target that never
+  // settles) shouldn't tie up the "only one audit at a time" slot forever —
+  // auto-cancel past the deadline. Cancellation is cooperative (same path as
+  // a user clicking Cancel), so whatever pages finished are still reported.
+  const timeoutHandle = setTimeout(() => {
+    if (!job.abortController.signal.aborted) {
+      emit(job, { type: 'status', status: 'cancelling', reason: 'timeout' });
+      job.abortController.abort();
+    }
+  }, LIMITS.jobTimeoutMs);
+
   try {
     const results = await auditSite({
       urls: job.urls,
@@ -107,6 +137,7 @@ export async function runJob(job) {
       viewport: job.viewport,
       concurrency: job.concurrency,
       signal: job.abortController.signal,
+      ssrf: job.ssrf,
       onPageStart: (url) => {
         job.inFlight.add(url);
         emit(job, { type: 'page-start', url });
@@ -147,6 +178,7 @@ export async function runJob(job) {
     emit(job, { type: 'status', status: 'error', error: job.error });
     emit(job, { type: 'done', status: 'error' });
   } finally {
+    clearTimeout(timeoutHandle);
     await persistManifest(job);
   }
 }
@@ -234,4 +266,48 @@ export async function hydrateFromDisk() {
     }
     jobs.set(job.id, job);
   }
+}
+
+/**
+ * Deletes on-disk job output older than `maxAgeMs`, or beyond the newest
+ * `maxJobs` directories, whichever the caller wants enforced (both apply by
+ * default). A currently pending/running job's directory is never touched
+ * regardless of its age. Returns the ids actually removed, so a caller can
+ * log what happened rather than have cleanup be invisible.
+ */
+export async function cleanupOldOutputs({ maxAgeMs = LIMITS.retentionDays * 86_400_000, maxJobs = LIMITS.retentionMaxJobs } = {}) {
+  let entries;
+  try {
+    entries = await fs.readdir(outputRoot(), { withFileTypes: true });
+  } catch {
+    return { deleted: [] };
+  }
+
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const outDir = path.join(outputRoot(), entry.name);
+    let stat;
+    try {
+      stat = await fs.stat(outDir);
+    } catch {
+      continue;
+    }
+    candidates.push({ name: entry.name, outDir, mtime: stat.mtimeMs });
+  }
+  candidates.sort((a, b) => b.mtime - a.mtime); // newest first
+
+  const now = Date.now();
+  const toDelete = candidates.filter((c, index) => index >= maxJobs || now - c.mtime > maxAgeMs);
+
+  const deleted = [];
+  for (const candidate of toDelete) {
+    const job = jobs.get(candidate.name);
+    if (job && (job.status === 'pending' || job.status === 'running')) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await fs.rm(candidate.outDir, { recursive: true, force: true }).catch(() => {});
+    jobs.delete(candidate.name);
+    deleted.push(candidate.name);
+  }
+  return { deleted };
 }
