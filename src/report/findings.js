@@ -336,6 +336,17 @@ export const CHECK_DEFS = [
           reference: b.reference,
         })),
   },
+  {
+    key: 'deadClicks',
+    section: '9 · Dead clicks',
+    label: 'Dead-click candidate (empty/# link with no static sign of JS behavior)',
+    manualReview: true,
+    items: (r) =>
+      (r.deadClicks?.dead || []).map((d) => ({
+        summary: `"${truncate(d.text, 50)}" has no destination and no visible click-binding attribute — confirm in a real browser before calling it dead`,
+        screenshot: d.screenshot,
+      })),
+  },
 ];
 
 /**
