@@ -208,12 +208,13 @@
 <template id="tpl-history">
   <section class="panel">
     <h1>Audit history</h1>
-    <div class="table-wrap">
+    <div class="table-wrap history-table-wrap">
       <table class="history-table">
         <thead><tr><th scope="col">Site</th><th scope="col">Pages</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody id="history-rows"></tbody>
       </table>
     </div>
+    <ul class="history-cards" id="history-cards" aria-label="Audit history"></ul>
   </section>
 </template>
 

@@ -582,20 +582,29 @@ async function renderHistoryView() {
   const tpl = document.getElementById('tpl-history');
   app.replaceChildren(tpl.content.cloneNode(true));
   const tbody = document.getElementById('history-rows');
+  const cards = document.getElementById('history-cards');
 
   let jobs = [];
   try {
     jobs = await fetchJSON('/api/audits');
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty-note">${escapeHtml(e.message)}</td></tr>`;
+    cards.innerHTML = `<li class="empty-note">${escapeHtml(e.message)}</li>`;
     return;
   }
 
   if (!jobs.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-note">No audits yet — start one from "New audit".</td></tr>';
+    const emptyMsg = 'No audits yet — start one from "New audit".';
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">${emptyMsg}</td></tr>`;
+    cards.innerHTML = `<li class="empty-note">${emptyMsg}</li>`;
     return;
   }
 
+  // Rendered twice — a <table> for wider screens and a stacked <ul> of cards
+  // for narrow ones — rather than reflowing one table with CSS, since
+  // reflowing table rows into cards without breaking table semantics needs
+  // ARIA role surgery (row/cell roles) for little benefit here; only one is
+  // ever visible at a time (see the max-width: 640px rule in styles.css).
   tbody.innerHTML = jobs
     .map(
       (j) => `
@@ -606,6 +615,23 @@ async function renderHistoryView() {
         <td>${fmtTime(j.startedAt || j.createdAt)}</td>
         <td><a href="#/jobs/${encodeURIComponent(j.id)}">View &rarr;<span class="sr-only"> ${escapeHtml(j.siteName)}</span></a></td>
       </tr>`
+    )
+    .join('');
+
+  cards.innerHTML = jobs
+    .map(
+      (j) => `
+      <li class="history-card">
+        <div class="history-card-top">
+          <span class="history-card-site">${escapeHtml(j.siteName)}</span>
+          <span class="status-pill ${j.status}">${j.status}</span>
+        </div>
+        <dl class="history-card-meta">
+          <div><dt>Pages</dt><dd>${j.urls.length}</dd></div>
+          <div><dt>Started</dt><dd>${fmtTime(j.startedAt || j.createdAt)}</dd></div>
+        </dl>
+        <a class="history-card-link" href="#/jobs/${encodeURIComponent(j.id)}">View audit &rarr;<span class="sr-only"> ${escapeHtml(j.siteName)}</span></a>
+      </li>`
     )
     .join('');
 }
