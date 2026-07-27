@@ -192,6 +192,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.9rem; }
 .breakdown-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; box-shadow: var(--shadow); min-width: 0; }
+.table-scroll { overflow-x: auto; }
 .breakdown-card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-family: system-ui, sans-serif; margin-bottom: 0.7rem; }
 .breakdown-bars { display: flex; flex-direction: column; gap: 0.5rem; }
 .breakdown-bar-row { display: grid; grid-template-columns: 7rem 1fr 2.5rem; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
@@ -279,7 +280,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .finding-page-list li { display: flex; align-items: center; gap: 0.7rem; padding-top: 0.6rem; }
 .finding-page-row-label { font-family: ui-monospace, monospace; font-size: 0.82rem; word-break: break-all; }
 
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+/* min-width: 0 overrides the flex item default of min-width: auto (its
+   min-content size) — without it, a table wider than the panel forces the
+   whole page to scroll horizontally instead of just scrolling inside here. */
+.table-wrap { overflow-x: auto; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .history-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .history-table th, .history-table td { text-align: left; padding: 0.6rem 0.9rem; border-top: 1px solid var(--border); }
 .history-table thead th { border-top: none; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; background: var(--surface-2); }
@@ -303,7 +307,16 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .lightbox-controls .btn-secondary { background: rgba(255, 255, 255, 0.9); }
 
 @media (max-width: 640px) {
-  .field-row, .filters { flex-direction: column; }
+  /* flex-wrap: nowrap here too — .filters keeps its desktop flex-wrap: wrap
+     (meant for wrapping onto extra ROWS), and column-direction + wrap
+     together lets the browser open a second, horizontally-offset column
+     once content exceeds the (auto) height, pushing the page wider. */
+  .field-row, .filters { flex-direction: column; flex-wrap: nowrap; }
+  /* .field-narrow's flex-basis (140px) sizes width in the desktop row
+     layout; once .field-row stacks into a column above, the same
+     flex-basis applies to height instead, leaving a ~100px dead gap
+     under every narrow field (Concurrency, Width, Height). */
+  .field-narrow { flex-basis: auto; }
   .finding-card { flex-direction: column; }
   .finding-thumb { width: 100%; height: 140px; }
   .finding-group-summary { flex-wrap: wrap; }
