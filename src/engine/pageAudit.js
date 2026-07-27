@@ -9,6 +9,7 @@ import { auditAriaLabels } from './checks/ariaLabels.js';
 import { auditTabOrder, auditDropdownOperability, auditFocusableHidden } from './checks/keyboardNav.js';
 import { auditFocusState } from './checks/focusState.js';
 import { auditLinkResolution } from './checks/linkResolution.js';
+import { auditImageResolution } from './checks/imageResolution.js';
 import { captureFullPage, captureHighlightedFindings, captureFocusStateFindings } from './screenshot.js';
 
 function slugForUrl(url) {
@@ -52,9 +53,13 @@ export async function auditPage(context, url, opts) {
   const focusableHidden = await auditFocusableHidden(page);
   const focusState = await auditFocusState(page);
 
-  // Issues its own HTTP requests (page.request), independent of DOM/focus
-  // state — safe to run anywhere in this read-only phase.
+  // Issue their own HTTP requests (page.request), independent of DOM/focus
+  // state — safe to run anywhere in this read-only phase. Image resolution
+  // also scrolls lazy-loaded images into view, which is still a read-only
+  // interaction (no clicks, no state mutation), so it's fine alongside the
+  // rest of this phase too.
   const linkResolution = await auditLinkResolution(page, { allowHosts: opts.ssrf?.allowHosts });
+  const imageResolution = await auditImageResolution(page, { allowHosts: opts.ssrf?.allowHosts });
 
   await captureFullPage(page, shotDir, slug);
   await captureHighlightedFindings(
@@ -72,6 +77,7 @@ export async function auditPage(context, url, opts) {
       ...aria.ariaExpandedBad,
       ...focusableHidden.focusableButHidden,
       ...linkResolution.broken,
+      ...imageResolution.broken,
     ],
     shotDir,
     slug
@@ -93,5 +99,6 @@ export async function auditPage(context, url, opts) {
     keyboard: { tabOrder, dropdowns, focusableHidden },
     focusState,
     linkResolution,
+    imageResolution,
   };
 }

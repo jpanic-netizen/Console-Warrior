@@ -301,6 +301,41 @@ export const CHECK_DEFS = [
           reference: b.reference,
         })),
   },
+  {
+    key: 'brokenImages',
+    section: '8 · Broken images',
+    label: 'Broken image',
+    severity: 'serious',
+    manualReview: false,
+    items: (r) =>
+      (r.imageResolution?.broken || [])
+        .filter((b) => !b.manualReview)
+        .map((b) => ({
+          summary: `"${truncate(b.alt || '(no alt text)', 40)}" → ${truncate(b.href, 70)} (${
+            b.status !== null ? `HTTP ${b.status}${b.renderedOk ? '' : ', fails to render'}` : b.networkError
+          })`,
+          screenshot: b.screenshot,
+          origin: b.origin,
+          reference: b.reference,
+        })),
+  },
+  {
+    key: 'brokenImagesExternalReview',
+    section: '8 · Broken images',
+    label: 'External image — verify before reporting (SOP §6: automation may be blocked)',
+    manualReview: true,
+    items: (r) =>
+      (r.imageResolution?.broken || [])
+        .filter((b) => b.manualReview)
+        .map((b) => ({
+          summary: `"${truncate(b.alt || '(no alt text)', 40)}" → ${truncate(b.href, 70)} (${
+            b.status !== null ? `HTTP ${b.status}` : b.networkError
+          }) — confirm in a real browser before calling it broken`,
+          screenshot: b.screenshot,
+          origin: b.origin,
+          reference: b.reference,
+        })),
+  },
 ];
 
 /**

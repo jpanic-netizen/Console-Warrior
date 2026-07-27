@@ -170,7 +170,7 @@ test('listCheckTypes covers every SOW section and flags manual-review checks', (
   const checks = listCheckTypes();
   assert.ok(checks.length > 15);
   const manualKeys = checks.filter((c) => c.manualReview).map((c) => c.key);
-  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'contrastManualReview'].sort());
+  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview'].sort());
 });
 
 // ---------- groupFindings ----------
