@@ -1,0 +1,9 @@
+{
+  "name": "Example Client Site",
+  "viewport": { "width": 1440, "height": 900 },
+  "urls": [
+    "https://example-client.com/",
+    "https://example-client.com/about",
+    "https://example-client.com/contact"
+  ]
+}

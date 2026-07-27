@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture — Console Warrior smoke test</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #fff; color: #111; }
+  header { background: #274b8f; color: #fff; padding: 1rem 2rem; }
+  .low-contrast { color: #9aa4b2; background: #ffffff; } /* ~2.5:1 fail */
+  .brand-blue { color: #4277c7; } /* ~4.47:1 fail at normal size */
+  .large-pass { color: #4277c7; font-size: 26px; font-weight: 400; } /* 3:1 threshold, still fails at 4.47? actually need >=3 to pass large */
+  .hero { position: relative; height: 160px; background-image: linear-gradient(45deg, #333, #999); }
+  .hero span { color: #eee; position: absolute; top: 20px; left: 20px; }
+  .no-focus-ring:focus { outline: none; box-shadow: none; }
+  .weak-focus-ring { border: 2px solid transparent; }
+  .weak-focus-ring:focus { outline: none; box-shadow: none; border-color: #000; }
+  .good-focus-ring:focus { outline: 2px solid #ff5500; outline-offset: 2px; }
+  img.fixture-img { width: 40px; height: 40px; }
+  nav[hidden], .dropdown-panel[hidden] { display: none; }
+  .icon-btn { width: 32px; height: 32px; }
+  #skip-link { position: absolute; left: -9999px; }
+  #skip-link:focus { left: 0; top: 0; }
+</style>
+</head>
+<body>
+<a id="skip-link" href="#main" class="good-focus-ring">Skip to main content</a>
+<header>
+  <h1>Fixture Site</h1>
+  <h1 hidden>Fixture Site (responsive duplicate)</h1>
+  <nav>
+    <button id="toggle-good" aria-expanded="false" aria-controls="panel-good" class="good-focus-ring">Menu</button>
+    <div id="panel-good" hidden>
+      <a href="#a" tabindex="0">Item A</a>
+      <a href="#b" tabindex="0">Item B</a>
+    </div>
+
+    <div id="toggle-bad" role="presentation" aria-expanded="false" tabindex="0" class="no-focus-ring">Broken Toggle</div>
+  </nav>
+</header>
+
+<main id="main">
+  <h2>Welcome</h2>
+  <p class="low-contrast">This footer-grey text on white fails contrast (~2.5:1).</p>
+  <p class="brand-blue">This brand-blue body text also fails contrast at normal size (~4.47:1, needs 4.5:1).</p>
+  <p class="large-pass"><strong>This is large bold brand-blue text at 26px, so the 3:1 threshold applies and it should pass.</strong></p>
+
+  <div class="hero"><span>Text over a gradient — must land in manual review, not pass or fail.</span></div>
+
+  <h4>Jumped straight to H4 (level skip from H2)</h4>
+
+  <section>
+    <h3>Images</h3>
+    <img class="fixture-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23c00'/%3E%3C/svg%3E">
+    <img class="fixture-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23090'/%3E%3C/svg%3E" alt="filename-alt.png">
+    <img class="fixture-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%2300c'/%3E%3C/svg%3E" alt="">
+    <a href="#linked"><img class="fixture-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23aa0'/%3E%3C/svg%3E" alt=""></a>
+    <img class="fixture-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23444'/%3E%3C/svg%3E" alt="">
+    <img id="dup" class="fixture-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23048'/%3E%3C/svg%3E" alt="">
+  </section>
+
+  <section>
+    <h3>Forms</h3>
+    <label for="named-email">Email</label>
+    <input id="named-email" type="email" autocomplete="email">
+
+    <input id="dup" type="text" placeholder="Unlabeled text field">
+
+    <input type="tel" placeholder="Phone, no autocomplete">
+  </section>
+
+  <section>
+    <h3>Buttons</h3>
+    <button class="icon-btn no-focus-ring"></button>
+    <button aria-label="Learn more about how the fixture site works" class="weak-focus-ring">Learn More</button>
+    <button aria-label="Close" class="good-focus-ring">Open tab</button>
+    <a href="#c" class="good-focus-ring">A normal compliant link</a>
+  </section>
+</main>
+<script>
+  document.getElementById('toggle-good').addEventListener('click', () => {
+    const btn = document.getElementById('toggle-good');
+    const panel = document.getElementById('panel-good');
+    const open = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!open));
+    panel.hidden = open;
+  });
+  // Deliberately broken: a div with a click handler has no native keyboard
+  // activation (Enter/Space do nothing), unlike a real <button>.
+  document.getElementById('toggle-bad').addEventListener('click', () => {
+    const btn = document.getElementById('toggle-bad');
+    const open = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!open));
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('[aria-expanded="true"]').forEach((el) => {
+      el.setAttribute('aria-expanded', 'false');
+      if (el.id === 'toggle-good') document.getElementById('panel-good').hidden = true;
+    });
+  });
+</script>
+</body>
+</html>
