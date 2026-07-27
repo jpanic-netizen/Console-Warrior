@@ -122,6 +122,7 @@ test('totals key order now follows CHECK_DEFS (post-refactor) — axeViolations 
     'seoDuplicateTitle',
     'seoDuplicateDescription',
     'placeholderText',
+    'consoleErrors',
   ]);
 });
 
@@ -205,7 +206,7 @@ test('listCheckTypes: set, order, and manualReview flags (grows as Phase 1 check
       'ariaNoName', 'ariaLabelInName', 'ariaInputNoLabel', 'ariaNoAutocomplete', 'ariaExpandedBad', 'ariaDuplicateIds',
       'brokenLinks', 'brokenLinksExternalReview', 'brokenImages', 'brokenImagesExternalReview', 'deadClicks',
       'seoMissingH1', 'seoMissingDescription', 'seoMissingCanonical', 'seoMissingOpenGraph', 'seoMissingTwitterCard',
-      'seoDuplicateTitle', 'seoDuplicateDescription', 'seoNoindexReview', 'placeholderText',
+      'seoDuplicateTitle', 'seoDuplicateDescription', 'seoNoindexReview', 'placeholderText', 'consoleErrors',
     ]
   );
   const manualKeys = types.filter((t) => t.manualReview).map((t) => t.key);

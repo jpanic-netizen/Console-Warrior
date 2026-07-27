@@ -234,6 +234,30 @@ test('SEO checks: duplicate titles/descriptions across pages are detected end-to
   assert.equal(dupDesc.length, 2, 'both pages share the exact same description');
 });
 
+// ---------- Console errors ----------
+
+test('consoleErrors check surfaces each classified error, labels first-party vs third-party in the summary, and carries origin/reference', () => {
+  const page = makePageResult({
+    consoleErrors: [
+      { message: 'Internal bug', source: 'https://example.com/app.js', kind: 'uncaught', origin: 'internal' },
+      { message: 'Widget crashed', source: 'https://widget.example.net/embed.js', kind: 'console.error', origin: 'external' },
+    ],
+  });
+  const findings = extractFindings([page]);
+  const consoleFindings = findings.filter((f) => f.checkKey === 'consoleErrors');
+  assert.equal(consoleFindings.length, 2);
+  assert.match(consoleFindings[0].summary, /^\[internal\] Internal bug/);
+  assert.equal(consoleFindings[0].origin, 'internal');
+  assert.match(consoleFindings[1].summary, /^\[external\] Widget crashed/);
+  assert.equal(consoleFindings[1].origin, 'external');
+  assert.equal(consoleFindings[1].reference, 'https://widget.example.net/embed.js');
+});
+
+test('consoleErrors check produces nothing when the page result has no consoleErrors field at all', () => {
+  const findings = extractFindings([makePageResult()]);
+  assert.equal(findings.filter((f) => f.checkKey === 'consoleErrors').length, 0);
+});
+
 test('listCheckTypes covers every SOW section and flags manual-review checks', () => {
   const checks = listCheckTypes();
   assert.ok(checks.length > 15);

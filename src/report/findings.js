@@ -475,6 +475,19 @@ export const CHECK_DEFS = [
         screenshot: p.screenshot,
       })),
   },
+  {
+    key: 'consoleErrors',
+    section: '12 · Console errors',
+    label: 'Console error',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) =>
+      (r.consoleErrors || []).map((c) => ({
+        summary: `[${c.origin}] ${truncate(c.message, 90)}${c.source ? ` (${truncate(c.source, 60)})` : ''}`,
+        origin: c.origin === 'external' ? 'external' : 'internal',
+        reference: c.source,
+      })),
+  },
 ];
 
 /**

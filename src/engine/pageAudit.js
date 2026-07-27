@@ -13,6 +13,7 @@ import { auditImageResolution } from './checks/imageResolution.js';
 import { auditDeadClicks } from './checks/deadClicks.js';
 import { auditSeoMetadata } from './checks/seoMetadata.js';
 import { auditPlaceholderText } from './checks/placeholderText.js';
+import { classifyConsoleErrors, sourceUrlFromStack } from './checks/consoleErrors.js';
 import { captureFullPage, captureHighlightedFindings, captureFocusStateFindings } from './screenshot.js';
 
 function slugForUrl(url) {
@@ -28,8 +29,18 @@ function slugForUrl(url) {
  */
 export async function auditPage(context, url, opts) {
   const page = await context.newPage();
+  const pageOrigin = new URL(url).origin;
   const pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push(String(e)));
+  const rawConsoleErrors = [];
+  page.on('pageerror', (e) => {
+    pageErrors.push(String(e));
+    rawConsoleErrors.push({ message: String((e && e.message) || e), sourceUrl: sourceUrlFromStack(e && e.stack), kind: 'uncaught' });
+  });
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const loc = msg.location();
+    rawConsoleErrors.push({ message: msg.text(), sourceUrl: loc && loc.url ? loc.url : null, kind: 'console.error' });
+  });
 
   const slug = slugForUrl(url);
   const shotDir = path.join(opts.outDir, 'screenshots');
@@ -92,6 +103,8 @@ export async function auditPage(context, url, opts) {
   );
   await captureFocusStateFindings(page, [...focusState.noIndicator, ...focusState.weakIndicator], shotDir, slug);
 
+  const consoleErrors = classifyConsoleErrors(rawConsoleErrors, pageOrigin);
+
   await page.close();
 
   return {
@@ -99,6 +112,7 @@ export async function auditPage(context, url, opts) {
     slug,
     fullPageScreenshot: path.join(shotDir, `${slug}__full-page.png`),
     pageErrors,
+    consoleErrors,
     axe,
     contrast,
     altText,
