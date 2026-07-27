@@ -68,8 +68,14 @@ export function buildSummary(pageResults) {
 
     totals.headingSkips += r.headings.skips.length;
     add('headingSkips', r.headings.skips.length > 0);
-    add('headingMissingTitle', !r.headings.pageTitle);
-    add('headingMultipleH1', r.headings.visibleH1Count > 1);
+
+    const missingTitle = !r.headings.pageTitle;
+    totals.headingMissingTitle += missingTitle ? 1 : 0;
+    add('headingMissingTitle', missingTitle);
+
+    const multipleH1 = r.headings.visibleH1Count > 1;
+    totals.headingMultipleH1 += multipleH1 ? 1 : 0;
+    add('headingMultipleH1', multipleH1);
 
     totals.ariaNoName += r.aria.noName.length;
     add('ariaNoName', r.aria.noName.length > 0);

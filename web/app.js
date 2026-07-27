@@ -200,7 +200,6 @@ async function renderJobView(id) {
 
   const pageRows = new Map();
   let total = 0;
-  let done = 0;
   let es;
 
   function setStatus(status) {
@@ -209,7 +208,14 @@ async function renderJobView(id) {
     cancelBtn.hidden = !(status === 'pending' || status === 'running');
   }
 
+  // Derived from row state rather than incremented by event count: the SSE
+  // stream always replays a job's *entire* history on connect (not just new
+  // events since last time), so a counter that adds on every 'page-done' it
+  // sees would double-count when opening an already-finished job. Recounting
+  // from the DOM is naturally idempotent no matter how many times a page's
+  // events get (re)applied.
   function updateProgress() {
+    const done = [...pageRows.values()].filter((li) => li.classList.contains('done') || li.classList.contains('error')).length;
     const pct = total ? Math.round((done / total) * 100) : 0;
     progressFill.style.width = `${pct}%`;
     progressCaption.textContent = `${done} / ${total} pages complete`;
@@ -232,16 +238,15 @@ async function renderJobView(id) {
     } else if (event.type === 'page-done') {
       const li = ensureRow(event.url);
       li.className = 'done';
-      done += 1;
       updateProgress();
     } else if (event.type === 'page-error') {
       const li = ensureRow(event.url);
       li.className = 'error';
+      li.replaceChildren(...li.querySelectorAll('.dot, .url-text'));
       const errText = document.createElement('div');
       errText.className = 'err-text';
       errText.textContent = event.error || 'error';
       li.appendChild(errText);
-      done += 1;
       updateProgress();
     } else if (event.type === 'status') {
       setStatus(event.status);
@@ -349,23 +354,33 @@ async function renderJobView(id) {
   job.urls.forEach((u) => ensureRow(u));
   updateProgress();
 
+  const isTerminal = job.status === 'completed' || job.status === 'cancelled' || job.status === 'interrupted' || job.status === 'error';
+
+  if (isTerminal && job.hasLog) {
+    // A finished job whose owning process never restarted still has its full
+    // event history — the SSE connection below replays it in full, which is
+    // enough on its own to paint every row and load results. Nothing more to
+    // do here; adding a second source of truth is what caused the
+    // double-counted progress bug this comment is here to warn against.
+  } else if (isTerminal) {
+    // Hydrated from a job.json manifest after a server restart: no in-memory
+    // log, so there's nothing for SSE to replay. Approximate row state from
+    // the aggregate done count instead.
+    total = job.urls.length;
+    job.urls.forEach((u, i) => {
+      const li = ensureRow(u);
+      li.className = i < job.progress.done ? 'done' : '';
+    });
+    updateProgress();
+    loadResults();
+  }
+
   es = new EventSource(`/api/audits/${encodeURIComponent(id)}/events`);
   activeEventSource = es;
   es.onmessage = (msg) => applyEvent(JSON.parse(msg.data));
   es.onerror = () => {
     // SSE stream ends normally once the job is done; nothing to recover here.
   };
-
-  if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'interrupted') {
-    done = job.progress.done;
-    total = job.urls.length;
-    updateProgress();
-    job.urls.forEach((u, i) => {
-      const li = ensureRow(u);
-      li.className = i < done ? 'done' : '';
-    });
-    loadResults();
-  }
 }
 
 document.addEventListener('click', (e) => {

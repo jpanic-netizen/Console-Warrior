@@ -25,9 +25,18 @@ function jobToJSON(job) {
     error: job.error,
     progress: {
       total: job.urls.length,
-      done: job.log.filter((e) => e.type === 'page-done' || e.type === 'page-error').length,
+      // Prefer the actual results count once the run has finished (true for
+      // both a live job and one hydrated from disk, whose event log is
+      // always empty — see hydrateFromDisk) over counting log events, which
+      // only reflects real-time progress while a job is still in memory.
+      done: job.results ? job.results.length : job.log.filter((e) => e.type === 'page-done' || e.type === 'page-error').length,
       inFlight: [...job.inFlight],
     },
+    // Tells the client whether GET .../events has real history to replay.
+    // A job hydrated from disk after a server restart has no in-memory log
+    // (see hydrateFromDisk) even though it's already finished — the client
+    // needs to know that so it doesn't wait on a replay that will never come.
+    hasLog: job.log.length > 0,
     summary: job.summary,
   };
 }
