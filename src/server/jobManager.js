@@ -8,7 +8,15 @@ import { renderDocxReport } from '../report/docx/render.js';
 import { extractFindings } from '../report/findings.js';
 import { slugify, timestampSlug } from '../util/slug.js';
 
-const OUTPUT_ROOT = path.join(process.cwd(), 'output');
+// A function, not a frozen constant: this module is only ever imported once
+// per process (ESM caches it), so a `const` computed from process.cwd() at
+// import time would ignore any later chdir — which is exactly what our own
+// test suite does to sandbox its output. Recomputing on each call keeps it
+// honest in both settings without costing anything in the normal case where
+// cwd never changes.
+function outputRoot() {
+  return path.join(process.cwd(), 'output');
+}
 const jobs = new Map();
 
 function jobToJSON(job) {
@@ -54,7 +62,7 @@ async function persistManifest(job) {
 export function createJob({ siteName, urls, viewport, concurrency }) {
   const name = siteName || 'Accessibility Audit';
   const id = `${slugify(name)}-${timestampSlug()}`;
-  const outDir = path.join(OUTPUT_ROOT, id);
+  const outDir = path.join(outputRoot(), id);
   const job = {
     id,
     siteName: name,
@@ -173,7 +181,7 @@ export function getJobFindings(id) {
   return extractFindings(job.results);
 }
 
-export { jobToJSON, OUTPUT_ROOT };
+export { jobToJSON };
 
 /**
  * Hydrates the in-memory registry from job.json manifests left on disk by a
@@ -184,13 +192,13 @@ export { jobToJSON, OUTPUT_ROOT };
 export async function hydrateFromDisk() {
   let entries;
   try {
-    entries = await fs.readdir(OUTPUT_ROOT, { withFileTypes: true });
+    entries = await fs.readdir(outputRoot(), { withFileTypes: true });
   } catch {
     return;
   }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const outDir = path.join(OUTPUT_ROOT, entry.name);
+    const outDir = path.join(outputRoot(), entry.name);
     const manifestPath = path.join(outDir, 'job.json');
     let manifest;
     try {
