@@ -196,6 +196,9 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .breakdown-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; box-shadow: var(--shadow); min-width: 0; }
 .table-scroll { overflow-x: auto; }
 .breakdown-card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-family: system-ui, sans-serif; margin-bottom: 0.7rem; }
+.bucket-card { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.bucket-card:hover, .bucket-card:focus-visible { border-color: var(--accent); }
+.bucket-count { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 600; }
 .breakdown-bars { display: flex; flex-direction: column; gap: 0.5rem; }
 .breakdown-bar-row { display: grid; grid-template-columns: 7rem 1fr 2.5rem; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
 .breakdown-bar-label { overflow: hidden; text-overflow: ellipsis; }

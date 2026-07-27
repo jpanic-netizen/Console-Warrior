@@ -179,6 +179,61 @@ test('grouped findings collapse an identical issue repeated across pages, with t
   });
 });
 
+test('SOP report buckets: every finding has a bucket, the bucket filter and coverage/buckets endpoints agree with it', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const REPORT_BUCKETS = [
+      'candidatesAwaitingVerification',
+      'verifiedDefects',
+      'manualReviewItems',
+      'externalEnvironmentIssues',
+      'clientChangeRequests',
+    ];
+
+    const staticBuckets = await (await fetch(`${base}/api/report-buckets`)).json();
+    assert.equal(staticBuckets.length, REPORT_BUCKETS.length);
+    for (const b of staticBuckets) {
+      assert.ok(REPORT_BUCKETS.includes(b.key));
+      assert.ok(b.title);
+      assert.ok(b.hint);
+    }
+
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Bucket Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1 }),
+    });
+    const created = await createRes.json();
+    await pollUntilDone(base, created.id);
+
+    const all = (await (await fetch(`${base}/api/audits/${created.id}/findings?limit=500`)).json()).items;
+    assert.ok(all.length > 0);
+    for (const f of all) assert.ok(REPORT_BUCKETS.includes(f.bucket), `unexpected bucket "${f.bucket}" on ${f.checkKey}`);
+
+    // The fixture page has never been triaged, so nothing should be a verified
+    // defect or a client change request yet — only a human triage action sets those.
+    assert.ok(all.every((f) => f.bucket !== 'verifiedDefects' && f.bucket !== 'clientChangeRequests'));
+
+    const bucketCounts = await (await fetch(`${base}/api/audits/${created.id}/buckets`)).json();
+    const sumOfCounts = REPORT_BUCKETS.reduce((sum, k) => sum + bucketCounts.counts[k], 0);
+    assert.equal(sumOfCounts, all.length);
+
+    for (const key of REPORT_BUCKETS) {
+      const filtered = (await (await fetch(`${base}/api/audits/${created.id}/findings?bucket=${key}&limit=500`)).json()).items;
+      assert.equal(filtered.length, bucketCounts.counts[key]);
+      assert.ok(filtered.every((f) => f.bucket === key));
+    }
+
+    const coverage = await (await fetch(`${base}/api/audits/${created.id}/coverage`)).json();
+    assert.ok(Array.isArray(coverage.passed));
+    assert.ok(Array.isArray(coverage.notVerified));
+    assert.deepEqual(coverage.notVerified, []); // the one fixture page completed, so nothing is "not verified"
+    for (const p of coverage.passed) {
+      assert.ok(typeof p.key === 'string');
+      assert.ok(Array.isArray(p.pages) && p.pages.length > 0);
+    }
+  });
+});
+
 test('findings pagination (limit/offset) covers the full result set with no gaps or overlaps', async (t) => {
   await withServer(t, async ({ base, fixturePort }) => {
     const createRes = await fetch(`${base}/api/audits`, {

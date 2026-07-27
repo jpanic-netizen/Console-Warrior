@@ -146,6 +146,32 @@
         </div>
       </div>
 
+      <h2 class="section-heading">SOP reporting summary (§9)</h2>
+      <p class="field-hint">Every automated finding starts as a candidate, never a confirmed defect (SOP §11) — use the "Report bucket" filter below to see just one of these categories.</p>
+      <div class="breakdown-grid" id="bucket-summary"></div>
+
+      <h2 class="section-heading">Coverage</h2>
+      <div class="breakdown-grid">
+        <div class="breakdown-card">
+          <h3>What passed (checked, nothing found)</h3>
+          <div class="table-scroll">
+            <table class="breakdown-table" id="coverage-passed-table">
+              <thead><tr><th scope="col">Check</th><th scope="col">Type</th><th scope="col" class="num">Pages passing</th></tr></thead>
+              <tbody id="coverage-passed-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="breakdown-card">
+          <h3>What was not verified</h3>
+          <div class="table-scroll">
+            <table class="breakdown-table" id="coverage-not-verified-table">
+              <thead><tr><th scope="col">Page</th><th scope="col">Reason</th></tr></thead>
+              <tbody id="coverage-not-verified-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <h2 class="section-heading">Findings</h2>
       <div class="view-toggle" role="group" aria-label="Findings view">
         <button type="button" id="view-grouped" class="toggle-btn" aria-pressed="true">Grouped</button>
@@ -177,6 +203,12 @@
             <option value="">Automated + manual</option>
             <option value="false">Automated only</option>
             <option value="true">Manual review only</option>
+          </select>
+        </label>
+        <label class="field" for="filter-bucket">
+          <span>Report bucket (SOP §9)</span>
+          <select id="filter-bucket">
+            <option value="">All buckets</option>
           </select>
         </label>
         <label class="field" for="filter-search">

@@ -201,6 +201,34 @@ function renderBreakdown(breakdown) {
   document.getElementById('breakdown-page-rows').innerHTML = pageRows || '<tr><td colspan="3" class="empty-note">No findings.</td></tr>';
 }
 
+function renderBucketSummary(counts, meta) {
+  return meta
+    .map((m) => {
+      const n = counts[m.key] || 0;
+      return `
+        <button type="button" class="breakdown-card bucket-card" data-bucket="${escapeHtml(m.key)}" title="${escapeHtml(m.hint)}">
+          <h3>${escapeHtml(m.title)}</h3>
+          <div class="bucket-count">${n}</div>
+        </button>`;
+    })
+    .join('');
+}
+
+function renderCoverage(coverage) {
+  const passedRows = coverage.passed
+    .map(
+      (p) =>
+        `<tr><td>${escapeHtml(p.label)}</td><td>${p.manualReview ? 'Manual review' : 'Automated'}</td><td class="num">${p.pages.length}</td></tr>`
+    )
+    .join('');
+  document.getElementById('coverage-passed-rows').innerHTML = passedRows || '<tr><td colspan="3" class="empty-note">Nothing passed cleanly — see Findings below.</td></tr>';
+
+  const notVerifiedRows = coverage.notVerified
+    .map((n) => `<tr><td class="pagecell" title="${escapeHtml(n.url)}">${escapeHtml(pagePath(n.url))}</td><td>${escapeHtml(n.reason)}</td></tr>`)
+    .join('');
+  document.getElementById('coverage-not-verified-rows').innerHTML = notVerifiedRows || '<tr><td colspan="2" class="empty-note">Every page completed.</td></tr>';
+}
+
 function severityChip(f) {
   if (f.manualReview) return '<span class="chip manual">Manual</span>';
   if (f.severity) return `<span class="chip ${f.severity}">${SEVERITY_LABEL[f.severity] || f.severity}</span>`;
@@ -425,6 +453,33 @@ async function renderJobView(id) {
         // breakdown is supplementary — KPIs above still convey the totals
       }
 
+      const bucketSelect = document.getElementById('filter-bucket');
+      bucketSelect.replaceChildren(new Option('All buckets', ''));
+      let bucketMeta = [];
+      try {
+        bucketMeta = await fetchJSON('/api/report-buckets');
+        bucketMeta.forEach((m) => bucketSelect.appendChild(new Option(m.title, m.key)));
+      } catch { /* filter dropdown just stays generic */ }
+
+      try {
+        const [bucketCounts, coverage] = await Promise.all([
+          fetchJSON(`/api/audits/${encodeURIComponent(id)}/buckets`),
+          fetchJSON(`/api/audits/${encodeURIComponent(id)}/coverage`),
+        ]);
+        document.getElementById('bucket-summary').innerHTML = renderBucketSummary(bucketCounts.counts, bucketMeta);
+        renderCoverage(coverage);
+        document.getElementById('bucket-summary').querySelectorAll('.bucket-card').forEach((btn) =>
+          btn.addEventListener('click', () => {
+            bucketSelect.value = btn.dataset.bucket;
+            state.page = 0;
+            applyFilters();
+            document.getElementById('findings-grid').scrollIntoView({ behavior: 'smooth', block: 'start' });
+          })
+        );
+      } catch {
+        // SOP reporting summary/coverage are supplementary — findings list below still works
+      }
+
       const pageSelect = document.getElementById('filter-page');
       const checkSelect = document.getElementById('filter-check');
       pageSelect.replaceChildren(new Option('All pages', ''));
@@ -481,6 +536,7 @@ async function renderJobView(id) {
         if (severityValue) params.set('severity', severityValue);
         const manualValue = document.getElementById('filter-manual').value;
         if (manualValue) params.set('manualReview', manualValue);
+        if (bucketSelect.value) params.set('bucket', bucketSelect.value);
         if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
         if (state.view === 'grouped') params.set('grouped', 'true');
         params.set('sortBy', sortSelect.value);
@@ -500,7 +556,7 @@ async function renderJobView(id) {
           : '<p class="empty-note">No findings match these filters.</p>';
       }
 
-      [pageSelect, checkSelect, document.getElementById('filter-severity'), document.getElementById('filter-manual'), sortSelect, pageSizeSelect].forEach((el) =>
+      [pageSelect, checkSelect, document.getElementById('filter-severity'), document.getElementById('filter-manual'), bucketSelect, sortSelect, pageSizeSelect].forEach((el) =>
         el.addEventListener('change', () => {
           state.page = 0;
           applyFilters();

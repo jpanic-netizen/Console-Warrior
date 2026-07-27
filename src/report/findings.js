@@ -41,6 +41,23 @@ export function suggestSopSeverity(internalSeverity) {
   return SOP_SEVERITY_BY_INTERNAL[internalSeverity] || 'Medium';
 }
 
+/**
+ * Why a manualReview:true finding can't be auto-confirmed, distinct from
+ * *whether* it's confirmed (that's verificationStatus/classification):
+ *   - 'subjective'            needs a human's eyes/judgment on something
+ *                             automation has no ground truth for (decorative
+ *                             image? real dead click? text over a gradient?)
+ *   - 'external-blocked'      automation's own request was refused/blocked
+ *                             (403/429/503/timeout on a third-party host) —
+ *                             may well be a false positive, not a real defect
+ *   - 'environment-dependent' the SAME technical fact means something
+ *                             different on staging vs. production (SOP's own
+ *                             "Disallow: /" example) and the environment
+ *                             wasn't known/confirmed at audit time
+ * Only set on findings where manualReview is true; null otherwise.
+ */
+export const REVIEW_REASONS = ['subjective', 'external-blocked', 'environment-dependent'];
+
 function truncate(s, n = 90) {
   const str = String(s ?? '').trim();
   return str.length > n ? `${str.slice(0, n)}…` : str;
@@ -123,6 +140,7 @@ export const CHECK_DEFS = [
     section: '1 · Contrast',
     label: 'Contrast — text over image/gradient',
     manualReview: true,
+    reviewReason: 'subjective',
     items: (r) =>
       r.contrast.manualReview.map((f) => ({
         summary: `"${truncate(f.text)}" — ${f.reason}`,
@@ -220,6 +238,7 @@ export const CHECK_DEFS = [
     section: '4 · Alt text',
     label: 'Alt text — confirm decorative (alt="")',
     manualReview: true,
+    reviewReason: 'subjective',
     items: (r) =>
       r.altText.reviewEmptyAlt.map((f) => ({
         summary: `"${truncate(f.file, 50)}" (${f.widthPx}px) near heading "${truncate(f.nearestHeading, 30)}"${f.inLink ? ', inside a link' : ''} — confirm decorative`,
@@ -329,6 +348,7 @@ export const CHECK_DEFS = [
     section: '7 · Broken links',
     label: 'External link — verify before reporting (SOP §6: automation may be blocked)',
     manualReview: true,
+    reviewReason: 'external-blocked',
     items: (r) =>
       (r.linkResolution?.broken || [])
         .filter((b) => b.manualReview)
@@ -362,6 +382,7 @@ export const CHECK_DEFS = [
     section: '8 · Broken images',
     label: 'External image — verify before reporting (SOP §6: automation may be blocked)',
     manualReview: true,
+    reviewReason: 'external-blocked',
     items: (r) =>
       (r.imageResolution?.broken || [])
         .filter((b) => b.manualReview)
@@ -379,6 +400,7 @@ export const CHECK_DEFS = [
     section: '9 · Dead clicks',
     label: 'Dead-click candidate (empty/# link with no static sign of JS behavior)',
     manualReview: true,
+    reviewReason: 'subjective',
     items: (r) =>
       (r.deadClicks?.dead || []).map((d) => ({
         summary: `"${truncate(d.text, 50)}" has no destination and no visible click-binding attribute — confirm in a real browser before calling it dead`,
@@ -458,6 +480,7 @@ export const CHECK_DEFS = [
     section: '10 · SEO metadata',
     label: 'noindex present — confirm intentional for this environment',
     manualReview: true,
+    reviewReason: 'environment-dependent',
     items: (r) =>
       r.seo?.robotsMeta && /noindex/i.test(r.seo.robotsMeta)
         ? [{ summary: `<meta name="robots" content="${r.seo.robotsMeta}"> — normal on staging, a problem on production; confirm which this is` }]
@@ -501,6 +524,7 @@ export const CHECK_DEFS = [
     section: '13 · Infrastructure',
     label: 'robots.txt — confirm intentional for this environment',
     manualReview: true,
+    reviewReason: 'environment-dependent',
     items: (r) => (r.infrastructure?.robotsTxt?.manualReview ? [{ summary: r.infrastructure.robotsTxt.summary }] : []),
   },
   {
@@ -532,6 +556,7 @@ export const CHECK_DEFS = [
     section: '13 · Infrastructure',
     label: 'HTTPS — confirm intentional for this environment',
     manualReview: true,
+    reviewReason: 'environment-dependent',
     items: (r) => (r.infrastructure?.httpsRedirect?.manualReview ? [{ summary: r.infrastructure.httpsRedirect.summary }] : []),
   },
 ];
@@ -539,8 +564,11 @@ export const CHECK_DEFS = [
 /**
  * @param {Array} pageResults - the array auditSite() resolves with (one entry per URL).
  * @returns {Array} flat list of { id, page, slug, section, checkKey, checkLabel, severity,
- *   suggestedSeverity, confirmedSeverity, manualReview, verificationStatus, classification,
- *   reproducible, origin, reference, summary, screenshot, fullPageScreenshot }
+ *   suggestedSeverity, confirmedSeverity, manualReview, reviewReason, verificationStatus,
+ *   classification, reproducible, origin, reference, summary, screenshot, fullPageScreenshot,
+ *   bucket } — bucket is one of REPORT_BUCKETS, derived from the fields above via
+ *   findingBucket() and kept as a plain field so API consumers (the dashboard) can filter
+ *   on it without re-implementing the same rule.
  *
  * suggestedSeverity/confirmedSeverity, verificationStatus, and classification encode the
  * SOP's phase-6 triage gate as data rather than prose: every finding a check produces
@@ -561,7 +589,7 @@ export function extractFindings(pageResults) {
       for (const item of items) {
         seq += 1;
         const severity = item.severity || def.severity || null;
-        findings.push({
+        const finding = {
           id: `f${seq}`,
           page: r.url,
           slug: r.slug,
@@ -572,6 +600,7 @@ export function extractFindings(pageResults) {
           suggestedSeverity: def.manualReview ? null : suggestSopSeverity(severity),
           confirmedSeverity: null,
           manualReview: !!def.manualReview,
+          reviewReason: def.manualReview ? def.reviewReason || 'subjective' : null,
           verificationStatus: 'candidate',
           classification: null,
           reproducible: null,
@@ -580,11 +609,115 @@ export function extractFindings(pageResults) {
           summary: item.summary,
           screenshot: item.screenshot || null,
           fullPageScreenshot: r.fullPageScreenshot || null,
-        });
+        };
+        finding.bucket = findingBucket(finding);
+        findings.push(finding);
       }
     }
   }
   return findings;
+}
+
+/** The 7 report buckets SOP §9 requires reporting keep separate, in the order they should read. */
+export const REPORT_BUCKETS = [
+  'candidatesAwaitingVerification',
+  'verifiedDefects',
+  'manualReviewItems',
+  'externalEnvironmentIssues',
+  'clientChangeRequests',
+];
+
+/** Display copy for the 5 finding-level buckets, shared by both report renderers and the dashboard API. */
+export const BUCKET_META = {
+  candidatesAwaitingVerification: {
+    title: 'Candidates awaiting verification',
+    hint: 'Automated output nobody has triaged yet. SOP §11: "automated output is a candidate list, not a finding list" — treat these as leads to confirm, not confirmed defects.',
+  },
+  verifiedDefects: {
+    title: 'Verified defects',
+    hint: 'A human confirmed these as real, launch-relevant issues.',
+  },
+  manualReviewItems: {
+    title: 'Manual-review items',
+    hint: 'Needs a human’s judgment on something automation has no ground truth for (decorative image? a real dead click? text over a gradient?).',
+  },
+  externalEnvironmentIssues: {
+    title: 'External / environment issues',
+    hint: 'Automation was blocked by a third party, or the same technical fact means something different on staging vs. production and the environment wasn’t confirmed — may not be a real defect.',
+  },
+  clientChangeRequests: {
+    title: 'Client change requests',
+    hint: 'A human classified this as an intentional client decision, not a bug.',
+  },
+};
+
+/**
+ * Which of the 5 finding-level SOP report buckets a single finding belongs
+ * to. Reads entirely off fields already on the finding — no extra state, so
+ * it stays correct automatically once the Phase 2 triage UI starts writing
+ * verificationStatus/classification.
+ *   - clientChangeRequests: a human classified it as an intentional client
+ *     decision, not a bug — checked first so a triaged item never also
+ *     shows as a defect or a review item.
+ *   - verifiedDefects: a human confirmed it as a real, launch-relevant issue.
+ *   - externalEnvironmentIssues: manual-review because automation was
+ *     blocked externally or the environment wasn't known/confirmed —
+ *     kept apart from subjective manual-review items per the SOP's own list.
+ *   - manualReviewItems: manual-review for any other reason (needs a
+ *     human's eyes/judgment — decorative image, real dead click, etc).
+ *   - candidatesAwaitingVerification: everything else — automated output
+ *     nobody has triaged yet ("automated output is a candidate list, not a
+ *     finding list", SOP §11).
+ */
+export function findingBucket(f) {
+  if (f.classification === 'change-request') return 'clientChangeRequests';
+  if (f.verificationStatus === 'verified' && f.classification === 'defect') return 'verifiedDefects';
+  if (f.manualReview && (f.reviewReason === 'external-blocked' || f.reviewReason === 'environment-dependent')) return 'externalEnvironmentIssues';
+  if (f.manualReview) return 'manualReviewItems';
+  return 'candidatesAwaitingVerification';
+}
+
+/**
+ * Splits extracted findings into the 5 finding-level buckets the SOP's
+ * reporting standards require kept apart (the other 2 — "what passed" and
+ * "what was not verified" — aren't properties of a single finding, so
+ * buildCoverageReport() computes those from pageResults instead).
+ */
+export function bucketFindings(findings) {
+  const buckets = Object.fromEntries(REPORT_BUCKETS.map((k) => [k, []]));
+  for (const f of findings) {
+    buckets[f.bucket || findingBucket(f)].push(f);
+  }
+  return buckets;
+}
+
+/**
+ * The other 2 of the SOP's 7 reporting buckets: coverage, not findings.
+ * "What passed" needs stating explicitly per the SOP's own reporting
+ * standards — a check that ran and found nothing is different from a check
+ * that never ran, and a client reading only a list of problems can't tell
+ * those apart otherwise. "What was not verified" covers pages the audit
+ * itself couldn't complete (load failure, timeout) — zero findings there
+ * means "untested", not "clean".
+ */
+export function buildCoverageReport(pageResults) {
+  const ok = pageResults.filter((r) => r && !r.error);
+  const errored = pageResults.filter((r) => r && r.error);
+  const okUrls = ok.map((r) => r.url);
+
+  const passed = [];
+  for (const def of CHECK_DEFS) {
+    const pagesWithFindings = new Set(ok.filter((r) => (def.items(r) || []).length > 0).map((r) => r.url));
+    const passedPages = okUrls.filter((u) => !pagesWithFindings.has(u));
+    if (passedPages.length) {
+      passed.push({ key: def.key, section: def.section, label: def.label, manualReview: !!def.manualReview, pages: passedPages });
+    }
+  }
+
+  return {
+    passed,
+    notVerified: errored.map((r) => ({ url: r.url, reason: r.error })),
+  };
 }
 
 /** Distinct check-type options for a filter dropdown, in SOW order. */

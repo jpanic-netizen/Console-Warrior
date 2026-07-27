@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { extractFindings, bucketFindings, buildCoverageReport, BUCKET_META } from '../findings.js';
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -11,8 +12,9 @@ function relShot(reportDir, absPath) {
 }
 
 function statusChip(count, opts = {}) {
-  const { warn = false } = opts;
+  const { warn = false, positive = false } = opts;
   if (count === 0) return `<span class="chip pass">0 pass</span>`;
+  if (positive) return `<span class="chip pass">${count}</span>`;
   return `<span class="chip ${warn ? 'warn' : 'fail'}">${count}</span>`;
 }
 
@@ -142,6 +144,44 @@ function renderPage(reportDir, r) {
   </section>`;
 }
 
+function findingRow(reportDir, f) {
+  return [
+    shotThumb(reportDir, f),
+    esc(new URL(f.page).pathname || '/'),
+    esc(f.checkLabel),
+    esc(f.suggestedSeverity || f.severity || '—'),
+    esc(f.summary),
+  ];
+}
+
+function renderSopBuckets(reportDir, findings) {
+  const buckets = bucketFindings(findings);
+  const sections = Object.entries(BUCKET_META)
+    .map(([key, meta]) => {
+      const items = buckets[key] || [];
+      return findingsSection(
+        meta.title,
+        items.length,
+        `<p class="meta">${esc(meta.hint)}</p>${table(['Evidence', 'Page', 'Check', 'Severity', 'Summary'], items.map((f) => findingRow(reportDir, f)))}`,
+        { warn: key !== 'verifiedDefects' && key !== 'candidatesAwaitingVerification' }
+      );
+    })
+    .join('');
+  return `<section class="sop-buckets"><h2>SOP reporting summary (§9)</h2>${sections}</section>`;
+}
+
+function renderCoverage(pageResults) {
+  const { passed, notVerified } = buildCoverageReport(pageResults);
+  const passedRows = passed.map((p) => [esc(p.section), esc(p.label), p.manualReview ? 'manual review' : 'automated', String(p.pages.length), esc(p.pages.slice(0, 5).join(', ')) + (p.pages.length > 5 ? ', …' : '')]);
+  const notVerifiedRows = notVerified.map((n) => [esc(n.url), esc(n.reason)]);
+  return `
+  <section class="coverage">
+    <h2>Coverage</h2>
+    ${findingsSection('What passed (checked, nothing found)', passed.length, table(['Section', 'Check', 'Type', 'Pages passing', 'Example pages'], passedRows), { positive: true })}
+    ${findingsSection('What was not verified (audit could not complete)', notVerified.length, table(['Page', 'Reason'], notVerifiedRows), { warn: true })}
+  </section>`;
+}
+
 function renderSummary(summary) {
   const rows = Object.entries(summary.totals).map(([key, total]) => [
     esc(key),
@@ -191,6 +231,7 @@ export async function renderHtmlReport(report, outPath) {
     .map((r, i) => `<a href="#page-${i}">${esc(new URL(r.url).pathname || '/')}</a>`)
     .join('');
   const pages = report.results.map((r, i) => `<div id="page-${i}">${renderPage(reportDir, r)}</div>`).join('');
+  const findings = extractFindings(report.results);
 
   const html = `<!doctype html>
 <html lang="en">
@@ -202,8 +243,10 @@ export async function renderHtmlReport(report, outPath) {
 </head>
 <body>
 <h1>${esc(report.siteName)} — WCAG 2.1 AA Structured Accessibility Review</h1>
-<p class="meta">Generated ${esc(report.generatedAt)} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)</p>
+<p class="meta">Generated ${esc(report.generatedAt)} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s) · Environment: ${esc(report.environment || 'not specified')}</p>
 ${renderSummary(report.summary)}
+${renderSopBuckets(reportDir, findings)}
+${renderCoverage(report.results)}
 <nav class="toc"><strong>Pages:</strong> ${toc}</nav>
 ${pages}
 </body>
