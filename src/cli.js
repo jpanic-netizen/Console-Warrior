@@ -7,6 +7,7 @@ import { buildSummary } from './report/buildSummary.js';
 import { renderHtmlReport } from './report/html/render.js';
 import { renderDocxReport } from './report/docx/render.js';
 import { uploadDocxAsGoogleDoc } from './report/gdocs/upload.js';
+import { slugify, timestampSlug } from './util/slug.js';
 
 const program = new Command();
 
@@ -105,13 +106,3 @@ program
   });
 
 program.parseAsync(process.argv);
-
-function slugify(s) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
-}
-
-function timestampSlug() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}

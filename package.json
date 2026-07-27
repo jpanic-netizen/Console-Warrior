@@ -8,16 +8,20 @@
   },
   "scripts": {
     "audit": "node src/cli.js run",
-    "smoke": "bash test/fixtures/run-smoke.sh"
+    "smoke": "bash test/fixtures/run-smoke.sh",
+    "dashboard": "node src/server/index.js",
+    "test": "node --test test/*.test.js"
   },
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "axe-core": "^4.10.2",
     "commander": "^12.1.0",
     "docx": "^9.1.1",
+    "express": "^5.2.1",
     "googleapis": "^144.0.0",
     "playwright": "^1.48.0"
   }

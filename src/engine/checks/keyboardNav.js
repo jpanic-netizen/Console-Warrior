@@ -13,7 +13,7 @@
  */
 
 const FOCUSABLE_SELECTOR =
-  'a[href],button,input:not([type=hidden]),select,textarea,[tabindex]:not([tabindex="-1"]),[role=button]';
+  'a[href],button:not(:disabled),input:not([type=hidden]):not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"]),[role=button]';
 
 export async function auditTabOrder(page) {
   const expectedFocusableCount = await page.locator(FOCUSABLE_SELECTOR).count();
@@ -139,9 +139,24 @@ export async function auditDropdownOperability(page) {
 export async function auditFocusableHidden(page) {
   return page.evaluate((selector) => {
     const { tag } = window.__cw;
-    const found = [...document.querySelectorAll(selector)].filter(
-      (el) => el.offsetParent === null && el.tabIndex >= 0 && getComputedStyle(el).position !== 'fixed'
-    );
+    // The bug this looks for is an element that's invisible yet still
+    // reachable by Tab — visibility:hidden or opacity:0 without also being
+    // removed from the render tree. Geometry (getBoundingClientRect) is
+    // deliberately NOT used to detect "off-screen": it's viewport-relative,
+    // so a page scrolled by an earlier check (e.g. auditTabOrder following
+    // focus) makes ordinary above-the-fold elements read as negative-offset
+    // — and off-screen positioning is also the standard, correct technique
+    // for skip links, which must not be flagged. An element hidden via
+    // display:none (directly, or a `[hidden]`/collapsed <details> ancestor)
+    // isn't this bug either: browsers drop it from the tab order entirely,
+    // so checkVisibility()'s default (display/content-visibility only) check
+    // is exactly the right filter to exclude those first.
+    const found = [...document.querySelectorAll(selector)].filter((el) => {
+      if (el.tabIndex < 0) return false;
+      if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return false;
+      const style = getComputedStyle(el);
+      return style.visibility === 'hidden' || parseFloat(style.opacity) === 0;
+    });
 
     const positiveTabindex = [...document.querySelectorAll('[tabindex]')].filter(
       (el) => +el.getAttribute('tabindex') > 0

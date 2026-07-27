@@ -57,11 +57,17 @@ export async function auditAriaLabels(page) {
 
     const interactive = [...document.querySelectorAll(INTERACTIVE_SELECTOR)].filter(isShown);
 
-    const noName = interactive.filter(
-      (el) =>
-        !accessibleName(el) &&
-        !(el.tagName === 'INPUT' && !['submit', 'button', 'reset'].includes(el.type))
-    );
+    // SELECT/TEXTAREA and non-button/submit/reset INPUTs are form fields whose
+    // labeling (including <label for>, which accessibleName() deliberately
+    // doesn't chase) is already checked properly below by inputNoLabel —
+    // counting them here too would flag a correctly-<label>-associated field
+    // as nameless just because it has no aria-label/text content of its own.
+    const coveredByInputNoLabel = (el) =>
+      el.tagName === 'SELECT' ||
+      el.tagName === 'TEXTAREA' ||
+      (el.tagName === 'INPUT' && !['submit', 'button', 'reset'].includes(el.type));
+
+    const noName = interactive.filter((el) => !accessibleName(el) && !coveredByInputNoLabel(el));
 
     const labelInNameViolations = interactive.filter((el) => {
       const al = el.getAttribute('aria-label');
