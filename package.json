@@ -1,0 +1,21 @@
+{
+  "name": "console-warrior",
+  "version": "1.0.0",
+  "description": "Automated WCAG 2.1 AA structured accessibility audit bot (contrast, keyboard nav, focus states, alt text, heading hierarchy, ARIA labels) with screenshot evidence and HTML/DOCX/Google Docs reporting.",
+  "type": "module",
+  "bin": {
+    "console-warrior": "./src/cli.js"
+  },
+  "scripts": {
+    "audit": "node src/cli.js run",
+    "smoke": "bash test/fixtures/run-smoke.sh"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "axe-core": "^4.10.2",
+    "commander": "^12.1.0",
+    "docx": "^9.1.1",
+    "googleapis": "^144.0.0",
+    "playwright": "^1.48.0"
+  }
+}
