@@ -121,9 +121,15 @@ async function renderNewAuditView() {
     const width = Number(document.getElementById('viewport-width').value) || null;
     const height = Number(document.getElementById('viewport-height').value) || null;
     const concurrency = Number(document.getElementById('concurrency').value) || 3;
+    const environment = document.getElementById('environment').value;
 
     if (!urls.length) {
       errorEl.textContent = 'Add at least one page to audit.';
+      return;
+    }
+    if (!environment) {
+      errorEl.textContent = 'Select an environment (staging or production) — robots.txt/HTTPS findings depend on which.';
+      document.getElementById('environment').focus();
       return;
     }
 
@@ -138,6 +144,7 @@ async function renderNewAuditView() {
           siteName,
           urls,
           concurrency,
+          environment,
           viewport: width && height ? { width, height } : null,
         }),
       });

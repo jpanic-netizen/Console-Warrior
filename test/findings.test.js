@@ -258,11 +258,39 @@ test('consoleErrors check produces nothing when the page result has no consoleEr
   assert.equal(findings.filter((f) => f.checkKey === 'consoleErrors').length, 0);
 });
 
+// ---------- Infrastructure (site-level) ----------
+
+test('infrastructure checks read from r.infrastructure (attached to one page result, not repeated per page) and split automated vs manual-review correctly', () => {
+  const page = makePageResult({
+    infrastructure: {
+      robotsTxt: { manualReview: false, summary: 'robots.txt blocks production' },
+      sitemapXml: { manualReview: false, summary: 'sitemap missing' },
+      custom404: { manualReview: false, summary: 'soft-404' },
+      httpsRedirect: { manualReview: true, summary: 'confirm HTTPS intent' },
+    },
+  });
+  const findings = extractFindings([page]);
+  const byKey = Object.fromEntries(findings.map((f) => [f.checkKey, f]));
+  assert.ok(byKey.infraRobotsTxt);
+  assert.equal(byKey.infraRobotsTxt.manualReview, false);
+  assert.ok(byKey.infraSitemapXml);
+  assert.ok(byKey.infraCustom404);
+  assert.ok(byKey.infraHttpsReview);
+  assert.equal(byKey.infraHttpsReview.manualReview, true);
+  assert.equal(byKey.infraHttps, undefined, 'the manual-review variant fired, so the automated one must not');
+  assert.equal(byKey.infraRobotsTxtReview, undefined, 'the automated variant fired, so the manual-review one must not');
+});
+
+test('infrastructure checks produce nothing when r.infrastructure is entirely absent (most pages, since it only attaches to one)', () => {
+  const findings = extractFindings([makePageResult(), makePageResult({ url: 'https://example.com/b' })]);
+  assert.equal(findings.filter((f) => f.checkKey.startsWith('infra')).length, 0);
+});
+
 test('listCheckTypes covers every SOW section and flags manual-review checks', () => {
   const checks = listCheckTypes();
   assert.ok(checks.length > 15);
   const manualKeys = checks.filter((c) => c.manualReview).map((c) => c.key);
-  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview', 'deadClicks', 'seoNoindexReview'].sort());
+  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview', 'deadClicks', 'seoNoindexReview', 'infraRobotsTxtReview', 'infraHttpsReview'].sort());
 });
 
 // ---------- groupFindings ----------

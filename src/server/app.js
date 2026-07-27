@@ -122,7 +122,11 @@ export function createApp() {
   });
 
   app.post('/api/audits', async (req, res) => {
-    const { siteName, urls, viewport, concurrency } = req.body || {};
+    const { siteName, urls, viewport, concurrency, environment } = req.body || {};
+    if (environment !== undefined && environment !== null && environment !== '' && environment !== 'staging' && environment !== 'production') {
+      res.status(400).json({ error: 'environment must be "staging" or "production" (or omitted).' });
+      return;
+    }
     const cleanUrls = Array.isArray(urls)
       ? urls.map((u) => String(u).trim()).filter(Boolean)
       : [];
@@ -174,6 +178,7 @@ export function createApp() {
       viewport: viewport && viewport.width && viewport.height ? viewport : null,
       concurrency: requestedConcurrency,
       ssrf: skipSsrfCheck ? null : {},
+      environment: environment || null,
     });
     startJob(job);
     res.status(201).json(jobToJSON(job));

@@ -488,6 +488,52 @@ export const CHECK_DEFS = [
         reference: c.source,
       })),
   },
+  {
+    key: 'infraRobotsTxt',
+    section: '13 · Infrastructure',
+    label: 'robots.txt concern',
+    severity: 'serious',
+    manualReview: false,
+    items: (r) => (r.infrastructure?.robotsTxt && !r.infrastructure.robotsTxt.manualReview ? [{ summary: r.infrastructure.robotsTxt.summary }] : []),
+  },
+  {
+    key: 'infraRobotsTxtReview',
+    section: '13 · Infrastructure',
+    label: 'robots.txt — confirm intentional for this environment',
+    manualReview: true,
+    items: (r) => (r.infrastructure?.robotsTxt?.manualReview ? [{ summary: r.infrastructure.robotsTxt.summary }] : []),
+  },
+  {
+    key: 'infraSitemapXml',
+    section: '13 · Infrastructure',
+    label: 'sitemap.xml concern',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) => (r.infrastructure?.sitemapXml ? [{ summary: r.infrastructure.sitemapXml.summary }] : []),
+  },
+  {
+    key: 'infraCustom404',
+    section: '13 · Infrastructure',
+    label: 'Custom 404 concern',
+    severity: 'serious',
+    manualReview: false,
+    items: (r) => (r.infrastructure?.custom404 ? [{ summary: r.infrastructure.custom404.summary }] : []),
+  },
+  {
+    key: 'infraHttps',
+    section: '13 · Infrastructure',
+    label: 'HTTPS concern',
+    severity: 'serious',
+    manualReview: false,
+    items: (r) => (r.infrastructure?.httpsRedirect && !r.infrastructure.httpsRedirect.manualReview ? [{ summary: r.infrastructure.httpsRedirect.summary }] : []),
+  },
+  {
+    key: 'infraHttpsReview',
+    section: '13 · Infrastructure',
+    label: 'HTTPS — confirm intentional for this environment',
+    manualReview: true,
+    items: (r) => (r.infrastructure?.httpsRedirect?.manualReview ? [{ summary: r.infrastructure.httpsRedirect.summary }] : []),
+  },
 ];
 
 /**

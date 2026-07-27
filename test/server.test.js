@@ -349,6 +349,42 @@ test('validation rejects audits with no URLs or malformed URLs', async (t) => {
   });
 });
 
+test('environment is optional but validated when present, and survives onto the job record', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const bad = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Bad env', urls: [`http://127.0.0.1:${fixturePort}/`], environment: 'qa' }),
+    });
+    assert.equal(bad.status, 400);
+
+    const omitted = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'No env', urls: [`http://127.0.0.1:${fixturePort}/`] }),
+    });
+    assert.equal(omitted.status, 201);
+    const omittedJob = await omitted.json();
+    assert.equal(omittedJob.environment, null);
+    await fetch(`${base}/api/audits/${omittedJob.id}/cancel`, { method: 'POST' });
+    await pollUntilDone(base, omittedJob.id);
+
+    const staging = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Staging site', urls: [`http://127.0.0.1:${fixturePort}/`], environment: 'staging' }),
+    });
+    assert.equal(staging.status, 201);
+    const stagingJob = await staging.json();
+    assert.equal(stagingJob.environment, 'staging');
+
+    const fetched = await (await fetch(`${base}/api/audits/${stagingJob.id}`)).json();
+    assert.equal(fetched.environment, 'staging');
+    await fetch(`${base}/api/audits/${stagingJob.id}/cancel`, { method: 'POST' });
+    await pollUntilDone(base, stagingJob.id);
+  });
+});
+
 test('rejects a private-network audit target when SSRF protection is not bypassed', async (t) => {
   // Deliberately does NOT use withServer — this is the one test that needs
   // DASHBOARD_ALLOW_PRIVATE_TARGETS to be unset, to prove the real guard works.

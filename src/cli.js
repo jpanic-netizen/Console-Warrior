@@ -24,6 +24,13 @@ program
   .option('-o, --out <dir>', 'output directory', null)
   .option('--formats <list>', 'comma list of report formats: html,docx', 'html,docx')
   .option('--concurrency <n>', 'pages to audit in parallel', (v) => parseInt(v, 10), 3)
+  .option('--environment <env>', 'staging|production — judges environment-dependent infra findings (robots.txt, HTTPS); omit if unknown', (v) => {
+    const env = v.toLowerCase();
+    if (env !== 'staging' && env !== 'production') {
+      throw new Error('--environment must be "staging" or "production"');
+    }
+    return env;
+  })
   .option('--gdoc-credentials <path>', 'service account JSON for optional Google Docs upload')
   .option('--gdoc-folder <id>', 'Google Drive folder ID to upload the report into')
   .action(async (opts) => {
@@ -43,14 +50,17 @@ program
     const outDir = opts.out || path.join('output', runId);
     await fs.mkdir(outDir, { recursive: true });
 
+    const environment = opts.environment || config.environment || null;
     console.log(`Console Warrior — auditing ${urls.length} URL(s) for "${siteName}"`);
     console.log(`Output: ${outDir}`);
+    console.log(`Environment: ${environment || 'not specified — robots.txt/HTTPS infra findings will be manual-review candidates'}`);
 
     const results = await auditSite({
       urls,
       outDir,
       viewport: config.viewport,
       concurrency: opts.concurrency,
+      environment,
       onPageDone: (r) => {
         if (r.error) {
           console.log(`  ✗ ${r.url} — ERROR: ${r.error.split('\n')[0]}`);
@@ -66,7 +76,7 @@ program
     await fs.writeFile(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 2));
 
     const formats = opts.formats.split(',').map((f) => f.trim().toLowerCase());
-    const report = { siteName, generatedAt: new Date().toISOString(), urls, results, summary };
+    const report = { siteName, generatedAt: new Date().toISOString(), urls, environment, results, summary };
 
     let htmlPath = null;
     let docxPath = null;

@@ -125,6 +125,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   resize: vertical; min-height: 8rem;
 }
 .field-hint { color: var(--muted); font-size: 0.8rem; margin: 0; }
+.field-hint-inline { flex: 1 1 260px; align-self: center; }
+.required-mark { color: var(--critical); }
 
 .btn-primary, .btn-secondary, .btn-ghost, .btn-danger {
   border-radius: 8px;

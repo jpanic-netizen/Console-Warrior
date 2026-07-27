@@ -47,6 +47,18 @@
       </label>
     </div>
 
+    <div class="field-row">
+      <label class="field field-narrow" for="environment">
+        <span>Environment <span class="required-mark" aria-hidden="true">*</span></span>
+        <select id="environment" required aria-describedby="environment-hint">
+          <option value="">— select —</option>
+          <option value="staging">Staging</option>
+          <option value="production">Production</option>
+        </select>
+      </label>
+      <p class="field-hint field-hint-inline" id="environment-hint">Required — a robots.txt/HTTPS finding means something different on each (e.g. "Disallow: /" is correct on staging, a launch blocker on production).</p>
+    </div>
+
     <fieldset class="field-row viewport-fields">
       <legend>Viewport (optional)</legend>
       <label class="field field-narrow" for="viewport-width">
