@@ -1,4 +1,4 @@
-import { CHECK_DEFS } from './findings.js';
+import { CHECK_DEFS, annotateCrossPageSeoDuplicates } from './findings.js';
 
 /**
  * Reduces the raw per-page results into (a) a scorecard of hard-fail counts
@@ -12,6 +12,7 @@ import { CHECK_DEFS } from './findings.js';
  * per-item list into totals, so a new check never needs a second edit here.
  */
 export function buildSummary(pageResults) {
+  annotateCrossPageSeoDuplicates(pageResults);
   const ok = pageResults.filter((r) => !r.error);
   const errored = pageResults.filter((r) => r.error);
 

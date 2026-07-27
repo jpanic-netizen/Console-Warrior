@@ -114,6 +114,13 @@ test('totals key order now follows CHECK_DEFS (post-refactor) — axeViolations 
     'ariaDuplicateIds',
     'brokenLinks',
     'brokenImages',
+    'seoMissingH1',
+    'seoMissingDescription',
+    'seoMissingCanonical',
+    'seoMissingOpenGraph',
+    'seoMissingTwitterCard',
+    'seoDuplicateTitle',
+    'seoDuplicateDescription',
   ]);
 });
 
@@ -196,10 +203,12 @@ test('listCheckTypes: set, order, and manualReview flags (grows as Phase 1 check
       'altLinkedNoName', 'altReviewEmptyAlt', 'headingSkips', 'headingMissingTitle', 'headingMultipleH1',
       'ariaNoName', 'ariaLabelInName', 'ariaInputNoLabel', 'ariaNoAutocomplete', 'ariaExpandedBad', 'ariaDuplicateIds',
       'brokenLinks', 'brokenLinksExternalReview', 'brokenImages', 'brokenImagesExternalReview', 'deadClicks',
+      'seoMissingH1', 'seoMissingDescription', 'seoMissingCanonical', 'seoMissingOpenGraph', 'seoMissingTwitterCard',
+      'seoDuplicateTitle', 'seoDuplicateDescription', 'seoNoindexReview',
     ]
   );
   const manualKeys = types.filter((t) => t.manualReview).map((t) => t.key);
-  assert.deepEqual(manualKeys, ['contrastManualReview', 'altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'deadClicks']);
+  assert.deepEqual(manualKeys, ['contrastManualReview', 'altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'deadClicks', 'seoNoindexReview']);
 });
 
 test('CLI "Total flagged findings" arithmetic (Object.values(totals) sum) is order-independent and unchanged', () => {

@@ -11,6 +11,7 @@ import { auditFocusState } from './checks/focusState.js';
 import { auditLinkResolution } from './checks/linkResolution.js';
 import { auditImageResolution } from './checks/imageResolution.js';
 import { auditDeadClicks } from './checks/deadClicks.js';
+import { auditSeoMetadata } from './checks/seoMetadata.js';
 import { captureFullPage, captureHighlightedFindings, captureFocusStateFindings } from './screenshot.js';
 
 function slugForUrl(url) {
@@ -44,6 +45,7 @@ export async function auditPage(context, url, opts) {
   const headings = await auditHeadings(page);
   const aria = await auditAriaLabels(page);
   const deadClicks = await auditDeadClicks(page);
+  const seo = await auditSeoMetadata(page);
 
   // Tab order MUST be recorded before anything else touches real focus.
   // Chromium's sequential focus navigation resumes from wherever focus was
@@ -104,5 +106,6 @@ export async function auditPage(context, url, opts) {
     linkResolution,
     imageResolution,
     deadClicks,
+    seo,
   };
 }

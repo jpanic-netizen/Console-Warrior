@@ -166,11 +166,79 @@ test('extractFindings assigns unique, stable ids across pages', () => {
   assert.equal(findings[1].page, 'https://example.com/b');
 });
 
+// ---------- SEO metadata checks ----------
+
+function seoPage(overrides = {}) {
+  return makePageResult({
+    headings: { visibleHeadings: [], skips: [], emptyHeadingsCount: 0, visibleH1Count: 1, h1InDomCount: 1, pageTitle: 'A Real Title' },
+    seo: { description: 'A real description', canonical: 'https://example.com/', ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: 'summary', robotsMeta: null, ...overrides },
+  });
+}
+
+test('SEO checks: a fully-populated, clean page produces no SEO findings at all', () => {
+  const findings = extractFindings([seoPage()]);
+  assert.equal(findings.filter((f) => f.section === '10 · SEO metadata').length, 0);
+});
+
+test('SEO checks: a page result with no seo field at all (check never ran) is silently skipped, not treated as "everything missing"', () => {
+  const findings = extractFindings([makePageResult()]); // no `seo` key
+  assert.equal(findings.filter((f) => f.checkKey.startsWith('seo')).length, 0);
+});
+
+test('SEO checks: missing description/canonical/Twitter Card/H1 are each reported once, with the right severity', () => {
+  const page = makePageResult({
+    headings: { visibleHeadings: [], skips: [], emptyHeadingsCount: 0, visibleH1Count: 0, h1InDomCount: 0, pageTitle: 'x' },
+    seo: { description: null, canonical: null, ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: null, robotsMeta: null },
+  });
+  const findings = extractFindings([page]);
+  const byKey = Object.fromEntries(findings.map((f) => [f.checkKey, f]));
+  assert.equal(byKey.seoMissingH1.severity, 'serious');
+  assert.equal(byKey.seoMissingDescription.severity, 'moderate');
+  assert.equal(byKey.seoMissingCanonical.severity, 'moderate');
+  assert.equal(byKey.seoMissingTwitterCard.severity, 'minor');
+  assert.equal(byKey.seoMissingOpenGraph, undefined, 'all three OG tags were present, so this must not fire');
+});
+
+test('SEO checks: missing Open Graph tags are named individually in the summary', () => {
+  const page = makePageResult({ seo: { description: 'd', canonical: 'c', ogTitle: null, ogDescription: null, ogImage: 'set', twitterCard: 't', robotsMeta: null } });
+  const findings = extractFindings([page]);
+  const og = findings.find((f) => f.checkKey === 'seoMissingOpenGraph');
+  assert.ok(og);
+  assert.match(og.summary, /og:title/);
+  assert.match(og.summary, /og:description/);
+  assert.ok(!og.summary.includes('og:image'), 'og:image was present and must not be listed as missing');
+});
+
+test('SEO checks: noindex is always a manual-review candidate, never an automated pass/fail, since that depends on staging vs production', () => {
+  const page = makePageResult({ seo: { description: 'd', canonical: 'c', ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: 't', robotsMeta: 'noindex, nofollow' } });
+  const findings = extractFindings([page]);
+  const noindex = findings.find((f) => f.checkKey === 'seoNoindexReview');
+  assert.ok(noindex);
+  assert.equal(noindex.manualReview, true);
+  assert.equal(noindex.severity, null);
+});
+
+test('SEO checks: duplicate titles/descriptions across pages are detected end-to-end through extractFindings', () => {
+  const pages = [
+    seoPage({ description: 'Same description' }),
+    makePageResult({
+      url: 'https://example.com/b',
+      headings: { visibleHeadings: [], skips: [], emptyHeadingsCount: 0, visibleH1Count: 1, h1InDomCount: 1, pageTitle: 'A Real Title' },
+      seo: { description: 'Same description', canonical: 'https://example.com/b', ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: 'summary', robotsMeta: null },
+    }),
+  ];
+  const findings = extractFindings(pages);
+  const dupTitle = findings.filter((f) => f.checkKey === 'seoDuplicateTitle');
+  const dupDesc = findings.filter((f) => f.checkKey === 'seoDuplicateDescription');
+  assert.equal(dupTitle.length, 2, 'both pages share the exact same title');
+  assert.equal(dupDesc.length, 2, 'both pages share the exact same description');
+});
+
 test('listCheckTypes covers every SOW section and flags manual-review checks', () => {
   const checks = listCheckTypes();
   assert.ok(checks.length > 15);
   const manualKeys = checks.filter((c) => c.manualReview).map((c) => c.key);
-  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview', 'deadClicks'].sort());
+  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'contrastManualReview', 'deadClicks', 'seoNoindexReview'].sort());
 });
 
 // ---------- groupFindings ----------

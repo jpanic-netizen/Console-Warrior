@@ -46,6 +46,44 @@ function truncate(s, n = 90) {
   return str.length > n ? `${str.slice(0, n)}…` : str;
 }
 
+/**
+ * Cross-page duplicate title/meta-description detection, mutating each
+ * page result in place (the same "annotate after the fact" pattern
+ * captureHighlightedFindings already uses for screenshots) — the engine's
+ * per-page seoMetadata check physically cannot see other pages' results,
+ * so this runs once, here, over the whole audited set. Called from both
+ * extractFindings() and buildSummary() (idempotent either way) so neither
+ * has an implicit ordering dependency on the other.
+ */
+export function annotateCrossPageSeoDuplicates(pageResults) {
+  const titleMap = new Map();
+  const descriptionMap = new Map();
+
+  for (const r of pageResults) {
+    if (!r || r.error || !r.seo) continue;
+    const title = (r.headings?.pageTitle || '').trim().toLowerCase();
+    if (title) {
+      if (!titleMap.has(title)) titleMap.set(title, []);
+      titleMap.get(title).push(r.url);
+    }
+    const description = (r.seo.description || '').trim().toLowerCase();
+    if (description) {
+      if (!descriptionMap.has(description)) descriptionMap.set(description, []);
+      descriptionMap.get(description).push(r.url);
+    }
+  }
+
+  for (const r of pageResults) {
+    if (!r || r.error || !r.seo) continue;
+    const title = (r.headings?.pageTitle || '').trim().toLowerCase();
+    const description = (r.seo.description || '').trim().toLowerCase();
+    const titlePages = title ? titleMap.get(title) : [];
+    const descriptionPages = description ? descriptionMap.get(description) : [];
+    r.seo.duplicateTitleWith = titlePages.length > 1 ? titlePages.filter((u) => u !== r.url) : [];
+    r.seo.duplicateDescriptionWith = descriptionPages.length > 1 ? descriptionPages.filter((u) => u !== r.url) : [];
+  }
+}
+
 function normalizeAxeImpact(impact) {
   return SEVERITIES.includes(impact) ? impact : 'moderate';
 }
@@ -347,6 +385,84 @@ export const CHECK_DEFS = [
         screenshot: d.screenshot,
       })),
   },
+  {
+    key: 'seoMissingH1',
+    section: '10 · SEO metadata',
+    label: 'No visible H1',
+    severity: 'serious',
+    manualReview: false,
+    items: (r) => (r.headings.visibleH1Count === 0 ? [{ summary: 'Page has no visible H1 element' }] : []),
+  },
+  {
+    key: 'seoMissingDescription',
+    section: '10 · SEO metadata',
+    label: 'Missing meta description',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) => (!r.seo || r.seo.description ? [] : [{ summary: 'Page has no <meta name="description"> tag' }]),
+  },
+  {
+    key: 'seoMissingCanonical',
+    section: '10 · SEO metadata',
+    label: 'Missing canonical link',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) => (!r.seo || r.seo.canonical ? [] : [{ summary: 'Page has no <link rel="canonical"> tag' }]),
+  },
+  {
+    key: 'seoMissingOpenGraph',
+    section: '10 · SEO metadata',
+    label: 'Missing Open Graph tags',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) => {
+      if (!r.seo) return [];
+      const missing = [['og:title', r.seo.ogTitle], ['og:description', r.seo.ogDescription], ['og:image', r.seo.ogImage]]
+        .filter(([, v]) => !v)
+        .map(([k]) => k);
+      return missing.length ? [{ summary: `Missing Open Graph tag(s): ${missing.join(', ')}` }] : [];
+    },
+  },
+  {
+    key: 'seoMissingTwitterCard',
+    section: '10 · SEO metadata',
+    label: 'Missing Twitter Card tag',
+    severity: 'minor',
+    manualReview: false,
+    items: (r) => (!r.seo || r.seo.twitterCard ? [] : [{ summary: 'Page has no <meta name="twitter:card"> tag' }]),
+  },
+  {
+    key: 'seoDuplicateTitle',
+    section: '10 · SEO metadata',
+    label: 'Duplicate page title',
+    severity: 'moderate',
+    manualReview: false,
+    items: (r) =>
+      r.seo?.duplicateTitleWith?.length
+        ? [{ summary: `Title "${truncate(r.headings.pageTitle, 50)}" is identical to ${r.seo.duplicateTitleWith.length} other page(s): ${r.seo.duplicateTitleWith.slice(0, 3).join(', ')}${r.seo.duplicateTitleWith.length > 3 ? ', …' : ''}` }]
+        : [],
+  },
+  {
+    key: 'seoDuplicateDescription',
+    section: '10 · SEO metadata',
+    label: 'Duplicate meta description',
+    severity: 'minor',
+    manualReview: false,
+    items: (r) =>
+      r.seo?.duplicateDescriptionWith?.length
+        ? [{ summary: `Meta description is identical to ${r.seo.duplicateDescriptionWith.length} other page(s): ${r.seo.duplicateDescriptionWith.slice(0, 3).join(', ')}${r.seo.duplicateDescriptionWith.length > 3 ? ', …' : ''}` }]
+        : [],
+  },
+  {
+    key: 'seoNoindexReview',
+    section: '10 · SEO metadata',
+    label: 'noindex present — confirm intentional for this environment',
+    manualReview: true,
+    items: (r) =>
+      r.seo?.robotsMeta && /noindex/i.test(r.seo.robotsMeta)
+        ? [{ summary: `<meta name="robots" content="${r.seo.robotsMeta}"> — normal on staging, a problem on production; confirm which this is` }]
+        : [],
+  },
 ];
 
 /**
@@ -364,6 +480,7 @@ export const CHECK_DEFS = [
  * this schema exists ahead of, so that workflow never needs a second data migration).
  */
 export function extractFindings(pageResults) {
+  annotateCrossPageSeoDuplicates(pageResults);
   const findings = [];
   let seq = 0;
   for (const r of pageResults) {
