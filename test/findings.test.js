@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractFindings, listCheckTypes, groupFindings, summarizeBreakdown, SEVERITIES } from '../src/report/findings.js';
+import { extractFindings, listCheckTypes, groupFindings, summarizeBreakdown, crossBrowserGroups, summarizeCrossBrowser, SEVERITIES } from '../src/report/findings.js';
 import { sortFindings, searchFindings, defaultSortDir } from '../src/report/sortSearch.js';
 
 /** Minimal but structurally complete synthetic page result, matching what auditPage() produces. */
@@ -294,6 +294,108 @@ test('sortFindings by page/check is stable and defaultSortDir picks sensible dir
   ];
   const sorted = sortFindings(items, 'page', 'asc');
   assert.deepEqual(sorted.map((f) => f.page), ['https://example.com/a', 'https://example.com/b']);
+});
+
+// ---------- crossBrowserGroups / summarizeCrossBrowser ----------
+
+test('crossBrowserGroups: the same issue on the same page found by both engines is classified "both" and never double-counted', () => {
+  const chromium = makePageResult({
+    engine: 'chromium',
+    contrast: { failures: [{ id: 'c1', text: 'Low contrast', ratio: 2, needed: 4.5, screenshot: '/c1-chromium.png' }], manualReview: [] },
+  });
+  const webkit = makePageResult({
+    engine: 'webkit',
+    contrast: { failures: [{ id: 'c1', text: 'Low contrast', ratio: 2, needed: 4.5, screenshot: '/c1-webkit.png' }], manualReview: [] },
+  });
+  const findings = extractFindings([chromium, webkit]);
+  assert.equal(findings.length, 2); // raw, per-engine, is NOT deduped
+  assert.equal(findings[0].engine, 'chromium');
+  assert.equal(findings[1].engine, 'webkit');
+
+  const groups = crossBrowserGroups(findings);
+  assert.equal(groups.length, 1, 'the same issue on the same page must collapse into a single combined finding');
+  assert.equal(groups[0].classification, 'both');
+  assert.deepEqual(groups[0].engines, ['chromium', 'webkit']);
+  assert.equal(groups[0].engineCount, 2);
+  assert.equal(groups[0].instances.length, 2, 'each engine keeps its own evidence, inspectable separately');
+  assert.ok(groups[0].instances.some((i) => i.engine === 'chromium' && i.screenshot === '/c1-chromium.png'));
+  assert.ok(groups[0].instances.some((i) => i.engine === 'webkit' && i.screenshot === '/c1-webkit.png'));
+});
+
+test('crossBrowserGroups: an issue found in only one engine is classified accordingly, not as "both"', () => {
+  const chromium = makePageResult({
+    engine: 'chromium',
+    aria: { noName: [{ tag: 'BUTTON', html: '<button></button>' }], labelInName: [], inputNoLabel: [], noAutocomplete: [], ariaExpandedBad: [], duplicateIds: [] },
+  });
+  const webkit = makePageResult({ engine: 'webkit' }); // clean — this specific issue doesn't reproduce under WebKit
+  const findings = extractFindings([chromium, webkit]);
+  const groups = crossBrowserGroups(findings);
+
+  const ariaGroup = groups.find((g) => g.checkKey === 'ariaNoName');
+  assert.ok(ariaGroup);
+  assert.equal(ariaGroup.classification, 'chromium-only');
+  assert.deepEqual(ariaGroup.engines, ['chromium']);
+  assert.equal(ariaGroup.instances.length, 1);
+});
+
+test('crossBrowserGroups: genuinely different issues on the same page never collapse together just because they share a page/engine', () => {
+  const chromium = makePageResult({
+    engine: 'chromium',
+    contrast: { failures: [{ id: 'c1', text: 'Issue A', ratio: 2, needed: 4.5 }], manualReview: [] },
+  });
+  const webkit = makePageResult({
+    engine: 'webkit',
+    contrast: { failures: [{ id: 'c2', text: 'Issue B', ratio: 2, needed: 4.5 }], manualReview: [] },
+  });
+  const findings = extractFindings([chromium, webkit]);
+  const groups = crossBrowserGroups(findings);
+  const contrastGroups = groups.filter((g) => g.checkKey === 'contrastFailures');
+  assert.equal(contrastGroups.length, 2, 'different summary text means a genuinely different issue, not the same one under two engines');
+  assert.ok(contrastGroups.every((g) => g.classification !== 'both'));
+});
+
+test('crossBrowserGroups: a Chromium-only audit (no webkit results at all) classifies everything "chromium-only"', () => {
+  const page = makePageResult({
+    engine: 'chromium',
+    contrast: { failures: [{ id: 'c1', text: 'Low contrast', ratio: 2, needed: 4.5 }], manualReview: [] },
+  });
+  const findings = extractFindings([page]);
+  const groups = crossBrowserGroups(findings);
+  assert.ok(groups.length > 0);
+  assert.ok(groups.every((g) => g.classification === 'chromium-only'));
+});
+
+test('summarizeCrossBrowser: rolls up classification counts, unique pages, and engines involved', () => {
+  const chromium = makePageResult({
+    url: 'https://example.com/a',
+    engine: 'chromium',
+    contrast: { failures: [{ id: 'c1', text: 'Shared issue', ratio: 2, needed: 4.5 }], manualReview: [] },
+    aria: { noName: [{ tag: 'BUTTON', html: '<button></button>' }], labelInName: [], inputNoLabel: [], noAutocomplete: [], ariaExpandedBad: [], duplicateIds: [] },
+  });
+  const webkit = makePageResult({
+    url: 'https://example.com/a',
+    engine: 'webkit',
+    contrast: { failures: [{ id: 'c1', text: 'Shared issue', ratio: 2, needed: 4.5 }], manualReview: [] },
+  });
+  const findings = extractFindings([chromium, webkit]);
+  const groups = crossBrowserGroups(findings);
+  const summary = summarizeCrossBrowser(groups);
+
+  assert.equal(summary.totalUniqueFindings, 2); // shared contrast issue (both) + chromium-only aria issue
+  assert.equal(summary.byClassification.both, 1);
+  assert.equal(summary.byClassification['chromium-only'], 1);
+  assert.equal(summary.byClassification['webkit-only'], 0);
+  assert.equal(summary.pagesAffected, 1);
+  assert.deepEqual(summary.enginesInvolved, ['chromium', 'webkit']);
+});
+
+test('extractFindings: defaults engine to "chromium" when a page result predates engine tagging', () => {
+  const page = makePageResult({
+    contrast: { failures: [{ id: 'c1', text: 'Low contrast', ratio: 2, needed: 4.5 }], manualReview: [] },
+  }); // no .engine field set at all
+  const findings = extractFindings([page]);
+  assert.ok(findings.length > 0);
+  assert.ok(findings.every((f) => f.engine === 'chromium'));
 });
 
 test('searchFindings matches summary, check label, and page case-insensitively', () => {

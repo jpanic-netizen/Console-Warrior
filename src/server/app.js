@@ -16,10 +16,11 @@ import {
   hasActiveJob,
   LIMITS,
 } from './jobManager.js';
-import { listCheckTypes, groupFindings, summarizeBreakdown } from '../report/findings.js';
+import { listCheckTypes, groupFindings, summarizeBreakdown, crossBrowserGroups, summarizeCrossBrowser } from '../report/findings.js';
 import { sortFindings, searchFindings, defaultSortDir } from '../report/sortSearch.js';
 import { checkTargetSafety } from '../engine/ssrfGuard.js';
 import { listDeviceProfiles, DEVICE_PROFILE_KEYS, CUSTOM_DEVICE_KEY } from '../engine/deviceProfiles.js';
+import { SUPPORTED_ENGINES } from '../engine/browser.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', '..', 'web');
@@ -102,6 +103,16 @@ export function createApp() {
     res.json(listDeviceProfiles());
   });
 
+  const BROWSER_ENGINE_OPTIONS = {
+    chromium: { label: 'Chromium', engines: ['chromium'] },
+    webkit: { label: 'WebKit (Safari-like)', engines: ['webkit'] },
+    both: { label: 'Chromium + WebKit — recommended', engines: ['chromium', 'webkit'] },
+  };
+
+  app.get('/api/engines', (req, res) => {
+    res.json(Object.entries(BROWSER_ENGINE_OPTIONS).map(([key, v]) => ({ key, label: v.label })));
+  });
+
   app.get('/api/presets', async (req, res) => {
     const configDir = path.join(process.cwd(), 'config', 'sites');
     let entries;
@@ -127,7 +138,7 @@ export function createApp() {
   });
 
   app.post('/api/audits', async (req, res) => {
-    const { siteName, urls, viewport, concurrency, device, width, height } = req.body || {};
+    const { siteName, urls, viewport, concurrency, device, width, height, browserEngine } = req.body || {};
     const cleanUrls = Array.isArray(urls)
       ? urls.map((u) => String(u).trim()).filter(Boolean)
       : [];
@@ -157,6 +168,12 @@ export function createApp() {
         return;
       }
     }
+    const engineOptionKey = browserEngine || 'chromium';
+    if (!BROWSER_ENGINE_OPTIONS[engineOptionKey]) {
+      res.status(400).json({ error: `browserEngine must be one of: ${Object.keys(BROWSER_ENGINE_OPTIONS).join(', ')}` });
+      return;
+    }
+    const engines = BROWSER_ENGINE_OPTIONS[engineOptionKey].engines;
 
     if (hasActiveJob()) {
       res.status(409).json({ error: 'An audit is already running. Cancel it or wait for it to finish before starting another.' });
@@ -194,6 +211,7 @@ export function createApp() {
       height: customHeight,
       concurrency: requestedConcurrency,
       ssrf: skipSsrfCheck ? null : {},
+      engines,
     });
     startJob(job);
     res.status(201).json(jobToJSON(job));
@@ -278,7 +296,7 @@ export function createApp() {
     const all = getJobFindings(req.params.id);
     if (!all) return res.status(202).json({ status: job.status, message: 'Findings not ready yet.' });
 
-    const { page, check, severity, manualReview, q, grouped, sortBy, sortDir, limit, offset } = req.query;
+    const { page, check, severity, manualReview, engine, q, grouped, sortBy, sortDir, limit, offset } = req.query;
 
     let findings = all;
     if (page) findings = findings.filter((f) => f.page === page);
@@ -286,6 +304,7 @@ export function createApp() {
     if (severity) findings = findings.filter((f) => f.severity === severity);
     if (manualReview === 'true') findings = findings.filter((f) => f.manualReview);
     if (manualReview === 'false') findings = findings.filter((f) => !f.manualReview);
+    if (engine === 'chromium' || engine === 'webkit') findings = findings.filter((f) => f.engine === engine);
     findings = searchFindings(findings, q);
 
     const isGrouped = grouped === 'true';
@@ -302,6 +321,22 @@ export function createApp() {
 
     const rewritten = isGrouped ? rewriteGroupShots(job.id, pageItems) : rewriteFindingShots(job.id, pageItems);
     res.json({ total, offset: offsetNum, limit: limitNum, grouped: isGrouped, items: rewritten });
+  });
+
+  app.get('/api/audits/:id/cross-browser', (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (!job.engines || job.engines.length < 2) {
+      return res.status(400).json({ error: 'This audit only ran one browser engine; there is nothing to compare.' });
+    }
+    const all = getJobFindings(req.params.id);
+    if (!all) return res.status(202).json({ status: job.status, message: 'Cross-browser comparison not ready yet.' });
+    const groups = crossBrowserGroups(all);
+    const rewritten = groups.map((g) => ({
+      ...g,
+      instances: g.instances.map((i) => ({ ...i, screenshot: shotUrl(job.id, i.screenshot), fullPageScreenshot: shotUrl(job.id, i.fullPageScreenshot) })),
+    }));
+    res.json({ summary: summarizeCrossBrowser(groups), groups: rewritten });
   });
 
   const DOWNLOADS = {

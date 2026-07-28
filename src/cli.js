@@ -2,8 +2,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Command } from 'commander';
-import { auditSite } from './engine/siteAudit.js';
+import { auditSiteMultiEngine } from './engine/siteAudit.js';
 import { buildSummary } from './report/buildSummary.js';
+import { extractFindings, crossBrowserGroups, summarizeCrossBrowser } from './report/findings.js';
 import { renderHtmlReport } from './report/html/render.js';
 import { renderDocxReport } from './report/docx/render.js';
 import { uploadDocxAsGoogleDoc } from './report/gdocs/upload.js';
@@ -13,6 +14,19 @@ import { resolveDeviceProfile, DEVICE_PROFILE_KEYS } from './engine/deviceProfil
 function parseDeviceOption(value) {
   if (!DEVICE_PROFILE_KEYS.includes(value)) {
     throw new Error(`--device must be one of: ${DEVICE_PROFILE_KEYS.join(', ')}`);
+  }
+  return value;
+}
+
+const BROWSER_OPTIONS = {
+  chromium: ['chromium'],
+  webkit: ['webkit'],
+  both: ['chromium', 'webkit'],
+};
+
+function parseBrowserOption(value) {
+  if (!BROWSER_OPTIONS[value]) {
+    throw new Error(`--browser must be one of: ${Object.keys(BROWSER_OPTIONS).join(', ')}`);
   }
   return value;
 }
@@ -35,6 +49,7 @@ program
   .option('--device <profile>', `device profile: ${DEVICE_PROFILE_KEYS.join('|')}`, parseDeviceOption, 'desktop')
   .option('--width <px>', 'custom viewport width (with --device custom)', (v) => parseInt(v, 10))
   .option('--height <px>', 'custom viewport height (with --device custom)', (v) => parseInt(v, 10))
+  .option('--browser <engine>', `browser engine: ${Object.keys(BROWSER_OPTIONS).join('|')}`, parseBrowserOption, 'chromium')
   .option('--gdoc-credentials <path>', 'service account JSON for optional Google Docs upload')
   .option('--gdoc-folder <id>', 'Google Drive folder ID to upload the report into')
   .action(async (opts) => {
@@ -54,38 +69,42 @@ program
     const outDir = opts.out || path.join('output', runId);
     await fs.mkdir(outDir, { recursive: true });
 
-    const deviceProfile = resolveDeviceProfile({
-      deviceKey: opts.device,
-      width: opts.width ?? config.viewport?.width,
-      height: opts.height ?? config.viewport?.height,
-      engine: 'chromium',
-    });
+    const deviceKey = opts.device;
+    const width = opts.width ?? config.viewport?.width;
+    const height = opts.height ?? config.viewport?.height;
+    const engines = BROWSER_OPTIONS[opts.browser];
+    const deviceProfile = resolveDeviceProfile({ deviceKey, width, height, engine: engines[0] });
 
     console.log(`Console Warrior — auditing ${urls.length} URL(s) for "${siteName}"`);
     console.log(`Output: ${outDir}`);
-    console.log(`Device: ${deviceProfile.label} (${deviceProfile.viewport.width}x${deviceProfile.viewport.height}, ${deviceProfile.emulationLabel})`);
+    console.log(`Device: ${deviceProfile.label} (${deviceProfile.viewport.width}x${deviceProfile.viewport.height})`);
+    console.log(`Browser engine(s): ${engines.join(' + ')}`);
 
-    const results = await auditSite({
+    const results = await auditSiteMultiEngine({
       urls,
       outDir,
-      deviceProfile,
+      deviceKey,
+      width,
+      height,
       concurrency: opts.concurrency,
+      engines,
       onPageDone: (r) => {
         if (r.error) {
-          console.log(`  ✗ ${r.url} — ERROR: ${r.error.split('\n')[0]}`);
+          console.log(`  ✗ [${r.engine}] ${r.url} — ERROR: ${r.error.split('\n')[0]}`);
         } else {
-          console.log(`  ✓ ${r.url}`);
+          console.log(`  ✓ [${r.engine}] ${r.url}`);
         }
       },
     });
 
     const summary = buildSummary(results);
+    const crossBrowser = engines.length > 1 ? summarizeCrossBrowser(crossBrowserGroups(extractFindings(results))) : null;
 
     await fs.writeFile(path.join(outDir, 'results.json'), JSON.stringify(results, null, 2));
     await fs.writeFile(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 2));
 
     const formats = opts.formats.split(',').map((f) => f.trim().toLowerCase());
-    const report = { siteName, generatedAt: new Date().toISOString(), urls, deviceProfile, results, summary };
+    const report = { siteName, generatedAt: new Date().toISOString(), urls, deviceProfile, engines, crossBrowser, results, summary };
 
     let htmlPath = null;
     let docxPath = null;
@@ -122,6 +141,13 @@ program
     console.log(`  Pages audited: ${summary.pagesAudited} (errors: ${summary.pagesErrored})`);
     console.log(`  Manual review items: ${summary.manualReviewCount}`);
     console.log(`  Total flagged findings: ${Object.values(summary.totals).reduce((a, b) => a + b, 0)}`);
+    if (crossBrowser) {
+      console.log('\nCross-browser comparison:');
+      console.log(`  Unique findings (deduplicated across engines): ${crossBrowser.totalUniqueFindings}`);
+      console.log(`  Both engines: ${crossBrowser.byClassification.both}`);
+      console.log(`  Chromium only: ${crossBrowser.byClassification['chromium-only']}`);
+      console.log(`  WebKit only: ${crossBrowser.byClassification['webkit-only']}`);
+    }
   });
 
 program.parseAsync(process.argv);

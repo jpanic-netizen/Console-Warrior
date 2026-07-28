@@ -1,11 +1,11 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { auditSite } from '../engine/siteAudit.js';
+import { auditSiteMultiEngine } from '../engine/siteAudit.js';
 import { buildSummary } from '../report/buildSummary.js';
 import { renderHtmlReport } from '../report/html/render.js';
 import { renderDocxReport } from '../report/docx/render.js';
-import { extractFindings } from '../report/findings.js';
+import { extractFindings, crossBrowserGroups, summarizeCrossBrowser } from '../report/findings.js';
 import { slugify, timestampSlug } from '../util/slug.js';
 import { resolveDeviceProfile } from '../engine/deviceProfiles.js';
 
@@ -66,6 +66,8 @@ function jobToJSON(job) {
     hasLog: job.log.length > 0,
     summary: job.summary,
     deviceProfile: job.deviceProfile,
+    engines: job.engines,
+    crossBrowser: job.crossBrowser,
   };
 }
 
@@ -79,14 +81,17 @@ async function persistManifest(job) {
   await fs.writeFile(path.join(job.outDir, 'job.json'), JSON.stringify(manifest, null, 2)).catch(() => {});
 }
 
-export function createJob({ siteName, urls, viewport, deviceKey, width, height, concurrency, ssrf }) {
+export function createJob({ siteName, urls, viewport, deviceKey, width, height, concurrency, ssrf, engines }) {
   const name = siteName || 'Accessibility Audit';
   const id = `${slugify(name)}-${timestampSlug()}`;
   const outDir = path.join(outputRoot(), id);
+  const resolvedDeviceKey = deviceKey || (viewport ? 'custom' : 'desktop');
+  const resolvedWidth = width ?? viewport?.width;
+  const resolvedHeight = height ?? viewport?.height;
   const deviceProfile = resolveDeviceProfile({
-    deviceKey: deviceKey || (viewport ? 'custom' : 'desktop'),
-    width: width ?? viewport?.width,
-    height: height ?? viewport?.height,
+    deviceKey: resolvedDeviceKey,
+    width: resolvedWidth,
+    height: resolvedHeight,
     engine: 'chromium',
   });
   const job = {
@@ -94,7 +99,11 @@ export function createJob({ siteName, urls, viewport, deviceKey, width, height, 
     siteName: name,
     urls,
     viewport: viewport || null,
+    deviceKey: resolvedDeviceKey,
+    customWidth: resolvedWidth,
+    customHeight: resolvedHeight,
     deviceProfile,
+    engines: engines && engines.length ? engines : ['chromium'],
     concurrency: concurrency || 3,
     ssrf: ssrf || null,
     outDir,
@@ -105,6 +114,7 @@ export function createJob({ siteName, urls, viewport, deviceKey, width, height, 
     error: null,
     results: null,
     summary: null,
+    crossBrowser: null,
     inFlight: new Set(),
     log: [],
     emitter: new EventEmitter(),
@@ -140,13 +150,22 @@ export async function runJob(job) {
   }, LIMITS.jobTimeoutMs);
 
   try {
-    const results = await auditSite({
+    // Engines run one full pass at a time (see auditSiteMultiEngine), so the
+    // same URL's page-start/page-done fires once per engine, sequentially —
+    // the dashboard's per-page progress row is keyed by URL alone and simply
+    // re-shows "in progress" then "done" again on the second engine's pass
+    // rather than tracking a separate row per (url, engine); the final
+    // results/report are unaffected either way.
+    const results = await auditSiteMultiEngine({
       urls: job.urls,
       outDir: job.outDir,
-      deviceProfile: job.deviceProfile,
+      deviceKey: job.deviceKey,
+      width: job.customWidth,
+      height: job.customHeight,
       concurrency: job.concurrency,
       signal: job.abortController.signal,
       ssrf: job.ssrf,
+      engines: job.engines,
       onPageStart: (url) => {
         job.inFlight.add(url);
         emit(job, { type: 'page-start', url });
@@ -163,11 +182,16 @@ export async function runJob(job) {
 
     if (results.length) {
       job.summary = buildSummary(results);
+      if (job.engines.length > 1) {
+        job.crossBrowser = summarizeCrossBrowser(crossBrowserGroups(extractFindings(results)));
+      }
       const report = {
         siteName: job.siteName,
         generatedAt: new Date().toISOString(),
         urls: job.urls,
         deviceProfile: job.deviceProfile,
+        engines: job.engines,
+        crossBrowser: job.crossBrowser,
         results,
         summary: job.summary,
       };
@@ -255,6 +279,7 @@ export async function hydrateFromDisk() {
       urls: manifest.urls,
       viewport: manifest.viewport,
       deviceProfile: manifest.deviceProfile || resolveDeviceProfile({ deviceKey: 'desktop' }),
+      engines: manifest.engines && manifest.engines.length ? manifest.engines : ['chromium'],
       concurrency: manifest.concurrency,
       outDir,
       status: manifest.status === 'running' || manifest.status === 'pending' ? 'interrupted' : manifest.status,
@@ -264,6 +289,7 @@ export async function hydrateFromDisk() {
       error: manifest.error,
       results: null,
       summary: manifest.summary,
+      crossBrowser: manifest.crossBrowser || null,
       inFlight: new Set(),
       log: [],
       emitter: new EventEmitter(),

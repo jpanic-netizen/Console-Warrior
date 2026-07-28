@@ -241,8 +241,9 @@ const CHECK_DEFS = [
 ];
 
 /**
- * @param {Array} pageResults - the array auditSite() resolves with (one entry per URL).
- * @returns {Array} flat list of { id, page, slug, section, checkKey, checkLabel, severity, manualReview, summary, screenshot, fullPageScreenshot }
+ * @param {Array} pageResults - the array auditSite() resolves with (one entry per URL — or,
+ *   for a multi-engine run via auditSiteMultiEngine(), one entry per URL per engine).
+ * @returns {Array} flat list of { id, page, slug, section, checkKey, checkLabel, severity, manualReview, summary, screenshot, fullPageScreenshot, engine }
  */
 export function extractFindings(pageResults) {
   const findings = [];
@@ -265,11 +266,77 @@ export function extractFindings(pageResults) {
           summary: item.summary,
           screenshot: item.screenshot || null,
           fullPageScreenshot: r.fullPageScreenshot || null,
+          engine: r.engine || 'chromium',
         });
       }
     }
   }
   return findings;
+}
+
+/**
+ * Groups findings that represent the *same underlying issue on the same
+ * page* across different browser engines — the cross-browser counterpart to
+ * groupFindings() (which collapses the same issue across *pages*, ignoring
+ * engine). This is what makes "Both engines / Chromium only / WebKit only"
+ * classification possible, and is the one place a combined Chromium+WebKit
+ * run's finding count is deduplicated: a group counts as ONE finding no
+ * matter how many engines independently surfaced it, so a combined summary
+ * never double-counts a defect just because both engines happened to agree
+ * it exists. Each group still keeps every engine's own instance (screenshot
+ * included) so a caller can "expand and inspect each engine's evidence
+ * separately".
+ */
+export function crossBrowserGroups(findings) {
+  const groups = new Map();
+  let seq = 0;
+  for (const f of findings) {
+    const key = `${f.page}::${f.checkKey}::${f.severity ?? 'none'}::${f.summary}`;
+    let g = groups.get(key);
+    if (!g) {
+      seq += 1;
+      g = {
+        id: `cb${seq}`,
+        page: f.page,
+        checkKey: f.checkKey,
+        checkLabel: f.checkLabel,
+        section: f.section,
+        severity: f.severity,
+        manualReview: f.manualReview,
+        summary: f.summary,
+        engineSet: new Set(),
+        instances: [],
+      };
+      groups.set(key, g);
+    }
+    g.engineSet.add(f.engine || 'chromium');
+    g.instances.push({ id: f.id, engine: f.engine || 'chromium', screenshot: f.screenshot, fullPageScreenshot: f.fullPageScreenshot });
+  }
+  return [...groups.values()].map((g) => {
+    const engines = [...g.engineSet].sort();
+    const classification = engines.length > 1 ? 'both' : engines[0] === 'webkit' ? 'webkit-only' : 'chromium-only';
+    const { engineSet, ...rest } = g;
+    return { ...rest, engines, engineCount: engines.length, classification };
+  });
+}
+
+/** Rollup counts for a cross-browser comparison view/report — how many unique
+ * findings fall into each classification, and how many distinct pages/engines are involved overall. */
+export function summarizeCrossBrowser(groups) {
+  const byClassification = { both: 0, 'chromium-only': 0, 'webkit-only': 0 };
+  const pages = new Set();
+  const engines = new Set();
+  for (const g of groups) {
+    byClassification[g.classification] += 1;
+    pages.add(g.page);
+    g.engines.forEach((e) => engines.add(e));
+  }
+  return {
+    totalUniqueFindings: groups.length,
+    byClassification,
+    pagesAffected: pages.size,
+    enginesInvolved: [...engines].sort(),
+  };
 }
 
 /** Distinct check-type options for a filter dropdown, in SOW order. */

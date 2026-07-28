@@ -78,13 +78,15 @@ export async function renderDocxReport(report, outPath) {
   const sections = [];
   const children = [];
 
+  const engines = report.engines || (report.deviceProfile ? ['chromium'] : null);
   children.push(
     new Paragraph({ text: `${report.siteName} — WCAG 2.1 AA Structured Accessibility Review`, heading: HeadingLevel.TITLE }),
     para(
       `Generated ${report.generatedAt} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)` +
         (report.deviceProfile
           ? ` · Device: ${report.deviceProfile.label} ${report.deviceProfile.viewport.width}×${report.deviceProfile.viewport.height} (${report.deviceProfile.emulationLabel})`
-          : '')
+          : '') +
+        (engines ? ` · Browser engine(s): ${engines.join(' + ')}` : '')
     ),
     heading('Executive summary', HeadingLevel.HEADING_1),
     para(`Pages audited: ${report.summary.pagesAudited} · Pages errored: ${report.summary.pagesErrored} · Manual-review items (never counted as failures): ${report.summary.manualReviewCount}`),
@@ -94,8 +96,25 @@ export async function renderDocxReport(report, outPath) {
     )
   );
 
+  if (report.crossBrowser) {
+    children.push(
+      heading('Cross-browser comparison', HeadingLevel.HEADING_1),
+      para(
+        `Unique findings (deduplicated across engines): ${report.crossBrowser.totalUniqueFindings} · Pages affected: ${report.crossBrowser.pagesAffected} · Engines run: ${report.crossBrowser.enginesInvolved.join(', ')}`
+      ),
+      dataTable(
+        ['Classification', 'Findings'],
+        [
+          ['Both engines', String(report.crossBrowser.byClassification.both)],
+          ['Chromium only', String(report.crossBrowser.byClassification['chromium-only'])],
+          ['WebKit only', String(report.crossBrowser.byClassification['webkit-only'])],
+        ]
+      )
+    );
+  }
+
   for (const r of report.results) {
-    children.push(heading(r.url, HeadingLevel.HEADING_1));
+    children.push(heading(`${r.url}${r.engine ? ` [${r.engine}]` : ''}`, HeadingLevel.HEADING_1));
     if (r.error) {
       children.push(para('Audit failed to complete for this URL.', { italics: true }));
       children.push(para(r.error));

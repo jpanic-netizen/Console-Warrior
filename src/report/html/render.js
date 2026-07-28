@@ -42,7 +42,7 @@ function findingsSection(title, count, bodyHtml, opts = {}) {
 function renderPage(reportDir, r) {
   if (r.error) {
     return `<section class="page-report error">
-      <h2>${esc(r.url)}</h2>
+      <h2>${esc(r.url)}${r.engine ? ` <span class="chip engine">${esc(r.engine)}</span>` : ''}</h2>
       <p class="empty">Audit failed to complete for this URL.</p>
       <pre>${esc(r.error)}</pre>
     </section>`;
@@ -88,9 +88,10 @@ function renderPage(reportDir, r) {
   const ariaExpandedBadRows = r.aria.ariaExpandedBad.map((f) => [shotThumb(reportDir, f), esc(f.text)]);
   const ariaDupRows = r.aria.duplicateIds.map((d) => [esc(d)]);
 
+  const engineLabel = r.engine ? ` <span class="chip engine">${esc(r.engine)}</span>` : '';
   return `
   <section class="page-report">
-    <h2><a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a></h2>
+    <h2><a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a>${engineLabel}</h2>
     ${fullShotRel ? `<a href="${esc(fullShotRel)}" target="_blank"><img class="full-shot" src="${esc(fullShotRel)}" alt="Full page screenshot" loading="lazy"></a>` : ''}
 
     <h3>0 · Axe-core baseline cross-check</h3>
@@ -157,6 +158,21 @@ function renderSummary(summary) {
   </section>`;
 }
 
+function renderCrossBrowser(crossBrowser) {
+  if (!crossBrowser) return '';
+  const rows = [
+    ['Both engines', String(crossBrowser.byClassification.both)],
+    ['Chromium only', String(crossBrowser.byClassification['chromium-only'])],
+    ['WebKit only', String(crossBrowser.byClassification['webkit-only'])],
+  ];
+  return `
+  <section class="summary">
+    <h2>Cross-browser comparison</h2>
+    <p class="meta">Unique findings (deduplicated across engines — a finding both engines agree on is counted once): ${crossBrowser.totalUniqueFindings} · Pages affected: ${crossBrowser.pagesAffected} · Engines run: ${crossBrowser.enginesInvolved.map(esc).join(', ')}</p>
+    ${table(['Classification', 'Findings'], rows)}
+  </section>`;
+}
+
 const STYLE = `
 :root { color-scheme: light dark; --fail:#c00; --warn:#a60; --pass:#080; --bg:#fff; --fg:#111; --border:#ddd; }
 @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#eee; --border:#333; } }
@@ -171,6 +187,7 @@ th { background: rgba(128,128,128,.12); }
 .chip.fail { background:var(--fail); color:#fff; }
 .chip.warn { background:var(--warn); color:#fff; }
 .chip.pass { background:var(--pass); color:#fff; }
+.chip.engine { background:#666; color:#fff; text-transform:uppercase; font-size:.7rem; vertical-align:middle; }
 .fail-text { color:var(--fail); }
 .empty { color:#888; font-style:italic; }
 .meta { color:#888; font-size:.9rem; }
@@ -188,9 +205,10 @@ nav.toc a { display:inline-block; margin:.15rem .6rem .15rem 0; }
 export async function renderHtmlReport(report, outPath) {
   const reportDir = path.dirname(outPath);
   const toc = report.results
-    .map((r, i) => `<a href="#page-${i}">${esc(new URL(r.url).pathname || '/')}</a>`)
+    .map((r, i) => `<a href="#page-${i}">${esc(new URL(r.url).pathname || '/')}${r.engine ? ` (${esc(r.engine)})` : ''}</a>`)
     .join('');
   const pages = report.results.map((r, i) => `<div id="page-${i}">${renderPage(reportDir, r)}</div>`).join('');
+  const engines = report.engines || (report.deviceProfile ? ['chromium'] : null);
 
   const html = `<!doctype html>
 <html lang="en">
@@ -202,8 +220,9 @@ export async function renderHtmlReport(report, outPath) {
 </head>
 <body>
 <h1>${esc(report.siteName)} — WCAG 2.1 AA Structured Accessibility Review</h1>
-<p class="meta">Generated ${esc(report.generatedAt)} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)${report.deviceProfile ? ` · Device: ${esc(report.deviceProfile.label)} ${report.deviceProfile.viewport.width}×${report.deviceProfile.viewport.height} (${esc(report.deviceProfile.emulationLabel)})` : ''}</p>
+<p class="meta">Generated ${esc(report.generatedAt)} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)${report.deviceProfile ? ` · Device: ${esc(report.deviceProfile.label)} ${report.deviceProfile.viewport.width}×${report.deviceProfile.viewport.height} (${esc(report.deviceProfile.emulationLabel)})` : ''}${engines ? ` · Browser engine(s): ${engines.map(esc).join(' + ')}` : ''}</p>
 ${renderSummary(report.summary)}
+${renderCrossBrowser(report.crossBrowser)}
 <nav class="toc"><strong>Pages:</strong> ${toc}</nav>
 ${pages}
 </body>

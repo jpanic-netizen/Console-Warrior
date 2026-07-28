@@ -576,6 +576,134 @@ test('POST /api/audits: omitting device defaults to the Desktop profile', async 
   });
 });
 
+test('GET /api/engines lists Chromium, WebKit, and the combined option', async (t) => {
+  await withServer(t, async ({ base }) => {
+    const res = await fetch(`${base}/api/engines`);
+    assert.equal(res.status, 200);
+    const engines = await res.json();
+    assert.deepEqual(
+      engines.map((e) => e.key),
+      ['chromium', 'webkit', 'both']
+    );
+  });
+});
+
+test('POST /api/audits: an invalid browserEngine value is rejected before anything starts', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const before = (await (await fetch(`${base}/api/audits`)).json()).length;
+    const res = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Bad Engine', urls: [`http://127.0.0.1:${fixturePort}/`], browserEngine: 'firefox' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /browserEngine must be one of/);
+    const after = (await (await fetch(`${base}/api/audits`)).json()).length;
+    assert.equal(after, before);
+  });
+});
+
+test('POST /api/audits: browserEngine defaults to chromium-only when omitted', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Default Engine Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1 }),
+    });
+    const created = await createRes.json();
+    assert.deepEqual(created.engines, ['chromium']);
+    const job = await pollUntilDone(base, created.id);
+    assert.deepEqual(job.engines, ['chromium']);
+    assert.equal(job.crossBrowser, null);
+
+    const resultsRes = await fetch(`${base}/api/audits/${created.id}/results`);
+    const results = await resultsRes.json();
+    assert.equal(results.length, 1);
+    assert.equal(results[0].engine, 'chromium');
+  });
+});
+
+test('POST /api/audits: browserEngine "both" runs Chromium+WebKit, tags every result, and produces a deduplicated cross-browser comparison', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Both Engines Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1, browserEngine: 'both' }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.deepEqual(created.engines, ['chromium', 'webkit']);
+
+    const job = await pollUntilDone(base, created.id, { timeoutMs: 90000 });
+    assert.equal(job.status, 'completed');
+    assert.equal(job.summary.pagesAudited, 2, 'one result per engine for the single URL');
+    assert.ok(job.crossBrowser, 'a 2-engine run must produce a cross-browser summary');
+    assert.ok(job.crossBrowser.totalUniqueFindings > 0);
+    assert.ok(job.crossBrowser.totalUniqueFindings < job.summary.pagesAudited * 20, 'sanity: deduplicated count should not just be the raw doubled count');
+    assert.deepEqual(job.crossBrowser.enginesInvolved, ['chromium', 'webkit']);
+
+    const resultsRes = await fetch(`${base}/api/audits/${created.id}/results`);
+    const results = await resultsRes.json();
+    assert.equal(results.length, 2);
+    assert.deepEqual(results.map((r) => r.engine).sort(), ['chromium', 'webkit']);
+    // independent screenshots per engine
+    assert.notEqual(results[0].fullPageScreenshot, results[1].fullPageScreenshot);
+
+    // per-finding engine filter
+    const chromiumOnly = (await (await fetch(`${base}/api/audits/${created.id}/findings?engine=chromium&limit=500`)).json()).items;
+    assert.ok(chromiumOnly.length > 0);
+    assert.ok(chromiumOnly.every((f) => f.engine === 'chromium'));
+    const webkitOnly = (await (await fetch(`${base}/api/audits/${created.id}/findings?engine=webkit&limit=500`)).json()).items;
+    assert.ok(webkitOnly.length > 0);
+    assert.ok(webkitOnly.every((f) => f.engine === 'webkit'));
+
+    // dedicated cross-browser comparison endpoint
+    const crossBrowserRes = await fetch(`${base}/api/audits/${created.id}/cross-browser`);
+    assert.equal(crossBrowserRes.status, 200);
+    const crossBrowser = await crossBrowserRes.json();
+    assert.equal(crossBrowser.summary.totalUniqueFindings, job.crossBrowser.totalUniqueFindings);
+    assert.ok(Array.isArray(crossBrowser.groups));
+    assert.ok(crossBrowser.groups.length > 0);
+    for (const g of crossBrowser.groups) {
+      assert.ok(['both', 'chromium-only', 'webkit-only'].includes(g.classification));
+      // at least one instance per distinct engine present — could be more if
+      // that same engine happened to find the identical summary twice
+      assert.ok(g.instances.length >= g.engineCount);
+      assert.equal(new Set(g.instances.map((i) => i.engine)).size, g.engineCount);
+      // screenshots are rewritten to API URLs, same as the regular findings endpoint
+      for (const inst of g.instances) {
+        if (inst.screenshot) assert.match(inst.screenshot, /^\/api\/audits\/.+\/shot\//);
+      }
+    }
+    const bothGroup = crossBrowser.groups.find((g) => g.classification === 'both');
+    if (bothGroup) {
+      assert.ok(bothGroup.instances.length >= 2);
+      assert.deepEqual(bothGroup.engines, ['chromium', 'webkit']);
+    }
+
+    // HTML/DOCX reports mention both engines and the comparison section
+    const htmlRes = await fetch(`${base}/api/audits/${created.id}/download/html`);
+    const html = await htmlRes.text();
+    assert.match(html, /chromium \+ webkit/i);
+    assert.match(html, /Cross-browser comparison/);
+  });
+});
+
+test('GET /api/audits/:id/cross-browser 400s for a single-engine audit — nothing to compare', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Single Engine Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1 }),
+    });
+    const created = await createRes.json();
+    await pollUntilDone(base, created.id);
+    const res = await fetch(`${base}/api/audits/${created.id}/cross-browser`);
+    assert.equal(res.status, 400);
+  });
+});
+
 test('GET /api/presets surfaces the checked-in site configs, including OutSail', async (t) => {
   // Deliberately runs with the real repo cwd (no chdir) so config/sites/*.json is visible.
   const app = createApp();
