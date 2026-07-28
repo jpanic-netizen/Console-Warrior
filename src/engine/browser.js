@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 // This environment ships a pre-installed Chromium that may not match the
 // exact revision the installed `playwright` npm package expects. Prefer it
@@ -7,16 +7,30 @@ import { chromium } from 'playwright';
 // download) its pinned revision.
 const PRE_INSTALLED_CHROMIUM = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
+export const SUPPORTED_ENGINES = ['chromium', 'webkit'];
+
 /**
  * Launches a clean, extension-free browser (equivalent to the SOW doc's
  * "always run in Incognito" rule — no extensions ever inject markup here).
+ *
+ * @param {'chromium'|'webkit'} [engine] - defaults to chromium. WebKit here
+ * is Playwright's own bundled WebKit build, not real Safari — it is real
+ * WebKit-engine automation (genuine rendering/JS engine differences show
+ * up), but nothing in this codebase may describe it as "Safari" or "a real
+ * iPhone" — see deviceProfiles.js's describeEmulation().
  */
-export async function launchBrowser() {
-  const executablePath = fs.existsSync(PRE_INSTALLED_CHROMIUM) ? PRE_INSTALLED_CHROMIUM : undefined;
+export async function launchBrowser(engine = 'chromium') {
   // This environment routes all outbound HTTPS through a local egress proxy
-  // (HTTPS_PROXY); Chromium does not read that env var itself, so it must be
-  // passed explicitly or every navigation gets reset by the network policy.
+  // (HTTPS_PROXY); neither engine reads that env var on its own, so it must
+  // be passed explicitly or every navigation gets reset by the network policy.
   const proxyServer = process.env.HTTPS_PROXY || process.env.https_proxy;
+  const proxy = proxyServer ? { server: proxyServer, bypass: 'localhost,127.0.0.1' } : undefined;
+
+  if (engine === 'webkit') {
+    return webkit.launch({ headless: true, proxy });
+  }
+
+  const executablePath = fs.existsSync(PRE_INSTALLED_CHROMIUM) ? PRE_INSTALLED_CHROMIUM : undefined;
   const args = ['--force-color-profile=srgb'];
   if (proxyServer) {
     // This sandbox's egress proxy resets connections on Chromium's TLS 1.3
@@ -29,7 +43,7 @@ export async function launchBrowser() {
   return chromium.launch({
     headless: true,
     executablePath,
-    proxy: proxyServer ? { server: proxyServer, bypass: 'localhost,127.0.0.1' } : undefined,
+    proxy,
     args,
   });
 }

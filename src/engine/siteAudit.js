@@ -52,7 +52,7 @@ export async function auditSite({ urls, outDir, viewport, deviceProfile, concurr
     (viewport
       ? resolveDeviceProfile({ deviceKey: 'custom', width: viewport.width, height: viewport.height, engine })
       : resolveDeviceProfile({ deviceKey: 'desktop', engine }));
-  const browser = await (launch ? launch() : launchBrowser());
+  const browser = await (launch ? launch() : launchBrowser(engine));
   const onAbort = () => browser.close().catch(() => {});
   if (signal) {
     if (signal.aborted) onAbort();
@@ -81,4 +81,41 @@ export async function auditSite({ urls, outDir, viewport, deviceProfile, concurr
     if (signal) signal.removeEventListener('abort', onAbort);
     await browser.close().catch(() => {});
   }
+}
+
+/**
+ * Runs auditSite() once per requested engine and concatenates the results
+ * into one flat array (each entry already carries its own `.engine`) — the
+ * shape every downstream consumer (buildSummary/findings/reports) already
+ * expects, so "audit with two engines" needed no changes to anything past
+ * this function. Engines run sequentially (one full browser lifecycle at a
+ * time) rather than concurrently: simpler resource management, and a single
+ * audit run is not latency-sensitive enough to justify the added complexity
+ * of two browsers competing for the same concurrency budget.
+ *
+ * `deviceKey`/`width`/`height` (rather than a single pre-resolved
+ * deviceProfile) are accepted here specifically because the resolved
+ * profile's `emulationLabel` depends on which engine is running — it must be
+ * re-resolved per engine, not reused across them.
+ */
+export async function auditSiteMultiEngine({ urls, outDir, deviceKey, width, height, concurrency = 3, onPageDone, onPageStart, signal, ssrf, engines = ['chromium'] }) {
+  const allResults = [];
+  for (const engine of engines) {
+    const resolvedDevice = resolveDeviceProfile({ deviceKey, width, height, engine });
+    // eslint-disable-next-line no-await-in-loop
+    const results = await auditSite({
+      urls,
+      outDir,
+      deviceProfile: resolvedDevice,
+      concurrency,
+      onPageDone,
+      onPageStart: onPageStart ? (url, index) => onPageStart(url, index, engine) : undefined,
+      signal,
+      ssrf,
+      engine,
+    });
+    allResults.push(...results);
+    if (signal?.aborted) break;
+  }
+  return allResults;
 }

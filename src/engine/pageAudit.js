@@ -12,10 +12,14 @@ import { captureFullPage, captureHighlightedFindings, captureFocusStateFindings 
 import { attachConsoleCapture } from './consoleCapture.js';
 import { resolveDeviceProfile } from './deviceProfiles.js';
 
-function slugForUrl(url) {
+function slugForUrl(url, engine) {
   const u = new URL(url);
   const raw = `${u.pathname}`.replace(/\/$/, '') || 'home';
-  return raw.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'home';
+  const base = raw.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'home';
+  // Two engines auditing the same URL must never collide on the same
+  // screenshot filenames — this is also how a combined Chromium+WebKit run's
+  // per-engine evidence stays independently identifiable on disk.
+  return `${base}-${engine}`;
 }
 
 /**
@@ -32,11 +36,11 @@ export async function auditPage(context, url, opts) {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
 
-  const slug = slugForUrl(url);
-  const shotDir = path.join(opts.outDir, 'screenshots');
   const deviceProfile = opts.deviceProfile || resolveDeviceProfile({ deviceKey: 'desktop' });
   const engine = opts.engine || 'chromium';
   const timestamp = new Date().toISOString();
+  const slug = slugForUrl(url, engine);
+  const shotDir = path.join(opts.outDir, 'screenshots');
 
   await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
   await primePage(page);
