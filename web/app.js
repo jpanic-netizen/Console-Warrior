@@ -1,3 +1,5 @@
+import { escapeHtml, displayPagePath, findingCard, findingGroupCard, SEVERITY_LABEL } from './render.js';
+
 const app = document.getElementById('app');
 const navLinks = document.querySelectorAll('[data-nav]');
 
@@ -22,18 +24,6 @@ async function fetchJSON(url, opts) {
 function fmtTime(ts) {
   if (!ts) return '—';
   return new Date(ts).toLocaleString();
-}
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function pagePath(u) {
-  try {
-    return new URL(u).pathname || '/';
-  } catch {
-    return u;
-  }
 }
 
 // ---------- Router ----------
@@ -152,8 +142,10 @@ async function renderNewAuditView() {
 
 // ---------- Job view ----------
 
-const SEVERITY_LABEL = { critical: 'Critical', serious: 'Serious', moderate: 'Moderate', minor: 'Minor' };
 const SEVERITY_ORDER = ['critical', 'serious', 'moderate', 'minor', 'manual'];
+// severityChip/thumbHtml/thumbPreviewHtml/findingCard/findingGroupCard/
+// SEVERITY_LABEL now live in render.js (DOM-free, unit tested) — imported
+// at the top of this file.
 
 function renderKpis(summary) {
   const totals = Object.values(summary.totals).reduce((a, b) => a + b, 0);
@@ -189,68 +181,9 @@ function renderBreakdown(breakdown) {
   document.getElementById('breakdown-check-rows').innerHTML = checkRows || '<tr><td colspan="3" class="empty-note">No findings.</td></tr>';
 
   const pageRows = breakdown.byPage
-    .map((p) => `<tr><td class="pagecell" title="${escapeHtml(p.page)}">${escapeHtml(pagePath(p.page))}</td><td class="num">${p.automated}</td><td class="num">${p.manual}</td></tr>`)
+    .map((p) => `<tr><td class="pagecell" title="${escapeHtml(p.page)}">${escapeHtml(displayPagePath(p.page))}</td><td class="num">${p.automated}</td><td class="num">${p.manual}</td></tr>`)
     .join('');
   document.getElementById('breakdown-page-rows').innerHTML = pageRows || '<tr><td colspan="3" class="empty-note">No findings.</td></tr>';
-}
-
-function severityChip(f) {
-  if (f.manualReview) return '<span class="chip manual">Manual</span>';
-  if (f.severity) return `<span class="chip ${f.severity}">${SEVERITY_LABEL[f.severity] || f.severity}</span>`;
-  return '';
-}
-
-function thumbHtml(screenshot, fullPageScreenshot, altLabel) {
-  const src = screenshot || fullPageScreenshot;
-  if (!src) return '<div class="finding-thumb empty">no capture</div>';
-  return `<img class="finding-thumb" src="${escapeHtml(src)}" alt="${escapeHtml(altLabel)}" aria-label="${escapeHtml(altLabel)}" loading="lazy" data-full="${escapeHtml(src)}" tabindex="0" role="button" aria-haspopup="dialog">`;
-}
-
-// Decorative-only variant for the sample thumbnail shown inside a <summary> —
-// a <summary> is itself an interactive disclosure control, so nesting another
-// focusable/interactive element inside it violates the nested-interactive rule.
-function thumbPreviewHtml(screenshot, fullPageScreenshot) {
-  const src = screenshot || fullPageScreenshot;
-  if (!src) return '<div class="finding-thumb-preview empty">no capture</div>';
-  return `<img class="finding-thumb-preview" src="${escapeHtml(src)}" alt="" loading="lazy">`;
-}
-
-function findingCard(f) {
-  const path = pagePath(f.page);
-  return `
-    <div class="finding-card">
-      ${thumbHtml(f.screenshot, f.fullPageScreenshot, `Evidence for ${f.checkLabel} on ${path}`)}
-      <div class="finding-body">
-        <div class="finding-top">${severityChip(f)}<span class="finding-page" title="${escapeHtml(f.page)}">${escapeHtml(path)}</span><strong>${escapeHtml(f.checkLabel)}</strong></div>
-        <div class="finding-summary">${escapeHtml(f.summary)}</div>
-      </div>
-    </div>`;
-}
-
-function findingGroupCard(g) {
-  const sample = g.instances.find((i) => i.screenshot) || g.instances[0] || {};
-  const pageListHtml = g.pages
-    .map((page) => {
-      const inst = g.instances.find((i) => i.page === page) || {};
-      return `
-        <li class="finding-page-row">
-          ${thumbHtml(inst.screenshot, inst.fullPageScreenshot, `Evidence for ${g.checkLabel} on ${pagePath(page)}`)}
-          <span class="finding-page-row-label" title="${escapeHtml(page)}">${escapeHtml(pagePath(page))}</span>
-        </li>`;
-    })
-    .join('');
-  return `
-    <details class="finding-group">
-      <summary class="finding-group-summary">
-        <span class="finding-thumb-wrap">${thumbPreviewHtml(sample.screenshot, sample.fullPageScreenshot)}</span>
-        <span class="finding-group-meta">
-          <span class="finding-top">${severityChip(g)}<strong>${escapeHtml(g.checkLabel)}</strong></span>
-          <span class="finding-summary">${escapeHtml(g.summary)}</span>
-        </span>
-        <span class="finding-page-count">${g.pageCount} page${g.pageCount === 1 ? '' : 's'}</span>
-      </summary>
-      <ul class="finding-page-list">${pageListHtml}</ul>
-    </details>`;
 }
 
 // ---------- Lightbox ----------
@@ -437,7 +370,7 @@ async function renderJobView(id) {
       [...pageRows.keys()].forEach((url) => {
         const opt = document.createElement('option');
         opt.value = url;
-        opt.textContent = pagePath(url);
+        opt.textContent = displayPagePath(url);
         pageSelect.appendChild(opt);
       });
 
