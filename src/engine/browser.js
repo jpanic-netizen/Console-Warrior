@@ -34,9 +34,19 @@ export async function launchBrowser() {
   });
 }
 
-export async function newAuditContext(browser, viewport) {
+/**
+ * @param {import('./deviceProfiles.js').ResolvedDeviceProfile} [deviceProfile] -
+ *   the object resolveDeviceProfile() returns. Passing a bare {width,height}
+ *   also works (isMobile/hasTouch/deviceScaleFactor default to desktop-like
+ *   values) for callers that only care about viewport size.
+ */
+export async function newAuditContext(browser, deviceProfile) {
+  const viewport = deviceProfile?.viewport || deviceProfile || { width: 1440, height: 900 };
   return browser.newContext({
-    viewport: viewport || { width: 1440, height: 900 },
+    viewport,
+    deviceScaleFactor: deviceProfile?.deviceScaleFactor ?? 1,
+    isMobile: deviceProfile?.isMobile ?? false,
+    hasTouch: deviceProfile?.hasTouch ?? false,
     colorScheme: 'light',
     reducedMotion: 'reduce',
   });

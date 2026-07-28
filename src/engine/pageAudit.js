@@ -9,6 +9,8 @@ import { auditAriaLabels } from './checks/ariaLabels.js';
 import { auditTabOrder, auditDropdownOperability, auditFocusableHidden } from './checks/keyboardNav.js';
 import { auditFocusState } from './checks/focusState.js';
 import { captureFullPage, captureHighlightedFindings, captureFocusStateFindings } from './screenshot.js';
+import { attachConsoleCapture } from './consoleCapture.js';
+import { resolveDeviceProfile } from './deviceProfiles.js';
 
 function slugForUrl(url) {
   const u = new URL(url);
@@ -23,11 +25,18 @@ function slugForUrl(url) {
  */
 export async function auditPage(context, url, opts) {
   const page = await context.newPage();
+  const capture = attachConsoleCapture(page, { onEntry: opts.onCaptureEntry ? (category, entry) => opts.onCaptureEntry(url, category, entry) : undefined });
+  // pageErrors kept as plain message strings for back-compat with existing
+  // consumers (findings.js reads r.pageErrors as string[]); attachConsoleCapture's
+  // own richer pageErrors (message+stack+timestamp) live in capture.pageErrors.
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
 
   const slug = slugForUrl(url);
   const shotDir = path.join(opts.outDir, 'screenshots');
+  const deviceProfile = opts.deviceProfile || resolveDeviceProfile({ deviceKey: 'desktop' });
+  const engine = opts.engine || 'chromium';
+  const timestamp = new Date().toISOString();
 
   await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
   await primePage(page);
@@ -79,6 +88,13 @@ export async function auditPage(context, url, opts) {
     slug,
     fullPageScreenshot: path.join(shotDir, `${slug}__full-page.png`),
     pageErrors,
+    engine,
+    deviceProfile,
+    timestamp,
+    consoleMessages: capture.consoleMessages,
+    pageErrorDetails: capture.pageErrors,
+    networkFailures: capture.networkFailures,
+    httpErrors: capture.httpErrors,
     axe,
     contrast,
     altText,

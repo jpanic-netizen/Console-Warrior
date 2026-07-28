@@ -1,6 +1,7 @@
 import { launchBrowser, newAuditContext } from './browser.js';
 import { auditPage } from './pageAudit.js';
 import { installSsrfGuard } from './ssrfGuard.js';
+import { resolveDeviceProfile } from './deviceProfiles.js';
 
 async function mapWithConcurrency(items, limit, fn, signal) {
   const results = new Array(items.length);
@@ -36,9 +37,22 @@ async function mapWithConcurrency(items, limit, fn, signal) {
  * trusted operator auditing a site directly) and the local fixture-server
  * smoke test keep working unchanged; the dashboard turns this on since it
  * lets arbitrary callers submit arbitrary URLs.
+ *
+ * `deviceProfile` (optional, the object resolveDeviceProfile() returns, or a
+ * bare {width,height}) controls the viewport/DPR/mobile-emulation settings
+ * every page context is created with; defaults to the Desktop profile.
+ * `engine` names which browser engine actually ran this ('chromium' |
+ * 'webkit') — stamped onto every page result so reports/diagnostics always
+ * know how a finding was reproduced; auditSite() itself doesn't choose the
+ * engine (the caller already picked a launcher), it just labels the output.
  */
-export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPageDone, onPageStart, signal, ssrf }) {
-  const browser = await launchBrowser();
+export async function auditSite({ urls, outDir, viewport, deviceProfile, concurrency = 3, onPageDone, onPageStart, signal, ssrf, engine = 'chromium', launch }) {
+  const resolvedDevice =
+    deviceProfile ||
+    (viewport
+      ? resolveDeviceProfile({ deviceKey: 'custom', width: viewport.width, height: viewport.height, engine })
+      : resolveDeviceProfile({ deviceKey: 'desktop', engine }));
+  const browser = await (launch ? launch() : launchBrowser());
   const onAbort = () => browser.close().catch(() => {});
   if (signal) {
     if (signal.aborted) onAbort();
@@ -48,14 +62,14 @@ export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPag
     const results = await mapWithConcurrency(urls, concurrency, async (url, index) => {
       if (signal?.aborted) return null;
       if (onPageStart) onPageStart(url, index);
-      const context = await newAuditContext(browser, viewport);
+      const context = await newAuditContext(browser, resolvedDevice);
       if (ssrf) await installSsrfGuard(context, ssrf);
       try {
-        const result = await auditPage(context, url, { outDir });
+        const result = await auditPage(context, url, { outDir, deviceProfile: resolvedDevice, engine });
         if (onPageDone) onPageDone(result);
         return result;
       } catch (e) {
-        const failure = { url, error: String(e && e.stack ? e.stack : e) };
+        const failure = { url, error: String(e && e.stack ? e.stack : e), engine, deviceProfile: resolvedDevice };
         if (onPageDone) onPageDone(failure);
         return failure;
       } finally {
