@@ -80,40 +80,87 @@ async function renderNewAuditView() {
   updateCount();
 
   const presetSelect = document.getElementById('preset-select');
+  let presets = [];
   try {
-    const presets = await fetchJSON('/api/presets');
+    presets = await fetchJSON('/api/presets');
     presets.forEach((p, i) => {
       const opt = document.createElement('option');
       opt.value = String(i);
       opt.textContent = `${p.name} (${p.urls.length} page${p.urls.length === 1 ? '' : 's'})`;
       presetSelect.appendChild(opt);
     });
-    presetSelect.addEventListener('change', () => {
-      if (presetSelect.value === '') return;
-      const p = presets[Number(presetSelect.value)];
-      document.getElementById('site-name').value = p.name;
-      if (p.viewport) {
-        document.getElementById('viewport-width').value = p.viewport.width;
-        document.getElementById('viewport-height').value = p.viewport.height;
-      }
-      urlBulk.value = p.urls.join('\n');
-      updateCount();
-    });
   } catch {
     // presets are a convenience only — a fetch failure here shouldn't block manual entry
   }
+
+  const deviceSelect = document.getElementById('device-select');
+  const customWidthField = document.getElementById('custom-width-field');
+  const customHeightField = document.getElementById('custom-height-field');
+  const widthInput = document.getElementById('viewport-width');
+  const heightInput = document.getElementById('viewport-height');
+  const deviceHint = document.getElementById('device-hint');
+
+  let deviceProfiles = [];
+  try {
+    deviceProfiles = await fetchJSON('/api/device-profiles');
+    deviceSelect.replaceChildren(
+      ...deviceProfiles.map((p) => {
+        const opt = document.createElement('option');
+        opt.value = p.key;
+        opt.textContent = p.viewport ? `${p.label} (${p.viewport.width}×${p.viewport.height})` : p.label;
+        return opt;
+      })
+    );
+  } catch {
+    // device list is a convenience only — the hardcoded "Desktop" fallback option in the HTML still works
+  }
+
+  function updateDeviceUi() {
+    const isCustom = deviceSelect.value === 'custom';
+    customWidthField.hidden = !isCustom;
+    customHeightField.hidden = !isCustom;
+    const profile = deviceProfiles.find((p) => p.key === deviceSelect.value);
+    if (isCustom) {
+      deviceHint.textContent = 'Custom viewport — CSS pixels, not physical screen resolution. Runs as a desktop-style Chromium context at this size (no mobile/touch emulation).';
+    } else if (deviceSelect.value === 'desktop') {
+      deviceHint.textContent = 'Desktop viewport. CSS viewport dimensions, not physical screen resolution.';
+    } else {
+      deviceHint.textContent = `${profile ? `${profile.viewport.width}×${profile.viewport.height}, ` : ''}Chromium mobile emulation — not real Mobile Safari or real hardware.`;
+    }
+  }
+  deviceSelect.addEventListener('change', updateDeviceUi);
+  updateDeviceUi();
+
+  presetSelect.addEventListener('change', () => {
+    if (presetSelect.value === '') return;
+    const p = presets[Number(presetSelect.value)];
+    document.getElementById('site-name').value = p.name;
+    if (p.viewport) {
+      deviceSelect.value = 'custom';
+      widthInput.value = p.viewport.width;
+      heightInput.value = p.viewport.height;
+      updateDeviceUi();
+    }
+    urlBulk.value = p.urls.join('\n');
+    updateCount();
+  });
 
   document.getElementById('start-audit').addEventListener('click', async () => {
     const errorEl = document.getElementById('form-error');
     errorEl.textContent = '';
     const siteName = document.getElementById('site-name').value.trim();
     const urls = parsedUrls();
-    const width = Number(document.getElementById('viewport-width').value) || null;
-    const height = Number(document.getElementById('viewport-height').value) || null;
+    const device = deviceSelect.value || 'desktop';
+    const width = Number(widthInput.value) || null;
+    const height = Number(heightInput.value) || null;
     const concurrency = Number(document.getElementById('concurrency').value) || 3;
 
     if (!urls.length) {
       errorEl.textContent = 'Add at least one page to audit.';
+      return;
+    }
+    if (device === 'custom' && (!width || !height)) {
+      errorEl.textContent = 'Enter both a width and a height for a custom device profile.';
       return;
     }
 
@@ -128,7 +175,9 @@ async function renderNewAuditView() {
           siteName,
           urls,
           concurrency,
-          viewport: width && height ? { width, height } : null,
+          device,
+          width: device === 'custom' ? width : undefined,
+          height: device === 'custom' ? height : undefined,
         }),
       });
       location.hash = `#/jobs/${encodeURIComponent(job.id)}`;
@@ -474,7 +523,10 @@ async function renderJobView(id) {
   }
 
   titleEl.textContent = job.siteName;
-  metaEl.textContent = `${job.urls.length} page(s) · started ${fmtTime(job.startedAt)}`;
+  const deviceMeta = job.deviceProfile
+    ? ` · ${job.deviceProfile.label} ${job.deviceProfile.viewport.width}×${job.deviceProfile.viewport.height} (${job.deviceProfile.emulationLabel})`
+    : '';
+  metaEl.textContent = `${job.urls.length} page(s) · started ${fmtTime(job.startedAt)}${deviceMeta}`;
   setStatus(job.status);
   total = job.urls.length;
   job.urls.forEach((u) => ensureRow(u));
@@ -521,16 +573,21 @@ async function renderHistoryView() {
   try {
     jobs = await fetchJSON('/api/audits');
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">${escapeHtml(e.message)}</td></tr>`;
     cards.innerHTML = `<li class="empty-note">${escapeHtml(e.message)}</li>`;
     return;
   }
 
   if (!jobs.length) {
     const emptyMsg = 'No audits yet — start one from "New audit".';
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">${emptyMsg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">${emptyMsg}</td></tr>`;
     cards.innerHTML = `<li class="empty-note">${emptyMsg}</li>`;
     return;
+  }
+
+  function deviceLabel(j) {
+    if (!j.deviceProfile) return '—';
+    return `${j.deviceProfile.label} (${j.deviceProfile.viewport.width}×${j.deviceProfile.viewport.height})`;
   }
 
   // Rendered twice — a <table> for wider screens and a stacked <ul> of cards
@@ -544,6 +601,7 @@ async function renderHistoryView() {
       <tr>
         <td>${escapeHtml(j.siteName)}</td>
         <td>${j.urls.length}</td>
+        <td>${escapeHtml(deviceLabel(j))}</td>
         <td><span class="status-pill ${j.status}">${j.status}</span></td>
         <td>${fmtTime(j.startedAt || j.createdAt)}</td>
         <td><a href="#/jobs/${encodeURIComponent(j.id)}">View &rarr;<span class="sr-only"> ${escapeHtml(j.siteName)}</span></a></td>
@@ -561,6 +619,7 @@ async function renderHistoryView() {
         </div>
         <dl class="history-card-meta">
           <div><dt>Pages</dt><dd>${j.urls.length}</dd></div>
+          <div><dt>Device</dt><dd>${escapeHtml(deviceLabel(j))}</dd></div>
           <div><dt>Started</dt><dd>${fmtTime(j.startedAt || j.createdAt)}</dd></div>
         </dl>
         <a class="history-card-link" href="#/jobs/${encodeURIComponent(j.id)}">View audit &rarr;<span class="sr-only"> ${escapeHtml(j.siteName)}</span></a>

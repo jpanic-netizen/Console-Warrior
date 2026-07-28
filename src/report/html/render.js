@@ -202,7 +202,7 @@ export async function renderHtmlReport(report, outPath) {
 </head>
 <body>
 <h1>${esc(report.siteName)} — WCAG 2.1 AA Structured Accessibility Review</h1>
-<p class="meta">Generated ${esc(report.generatedAt)} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)</p>
+<p class="meta">Generated ${esc(report.generatedAt)} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)${report.deviceProfile ? ` · Device: ${esc(report.deviceProfile.label)} ${report.deviceProfile.viewport.width}×${report.deviceProfile.viewport.height} (${esc(report.deviceProfile.emulationLabel)})` : ''}</p>
 ${renderSummary(report.summary)}
 <nav class="toc"><strong>Pages:</strong> ${toc}</nav>
 ${pages}

@@ -19,6 +19,7 @@ import {
 import { listCheckTypes, groupFindings, summarizeBreakdown } from '../report/findings.js';
 import { sortFindings, searchFindings, defaultSortDir } from '../report/sortSearch.js';
 import { checkTargetSafety } from '../engine/ssrfGuard.js';
+import { listDeviceProfiles, DEVICE_PROFILE_KEYS, CUSTOM_DEVICE_KEY } from '../engine/deviceProfiles.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', '..', 'web');
@@ -97,6 +98,10 @@ export function createApp() {
     res.json(LIMITS);
   });
 
+  app.get('/api/device-profiles', (req, res) => {
+    res.json(listDeviceProfiles());
+  });
+
   app.get('/api/presets', async (req, res) => {
     const configDir = path.join(process.cwd(), 'config', 'sites');
     let entries;
@@ -122,7 +127,7 @@ export function createApp() {
   });
 
   app.post('/api/audits', async (req, res) => {
-    const { siteName, urls, viewport, concurrency } = req.body || {};
+    const { siteName, urls, viewport, concurrency, device, width, height } = req.body || {};
     const cleanUrls = Array.isArray(urls)
       ? urls.map((u) => String(u).trim()).filter(Boolean)
       : [];
@@ -138,6 +143,19 @@ export function createApp() {
     if (requestedConcurrency > LIMITS.maxConcurrency) {
       res.status(400).json({ error: `Concurrency ${requestedConcurrency} exceeds the maximum of ${LIMITS.maxConcurrency}.` });
       return;
+    }
+    const deviceKey = device || (viewport ? CUSTOM_DEVICE_KEY : 'desktop');
+    if (!DEVICE_PROFILE_KEYS.includes(deviceKey)) {
+      res.status(400).json({ error: `device must be one of: ${DEVICE_PROFILE_KEYS.join(', ')}` });
+      return;
+    }
+    const customWidth = width ?? viewport?.width;
+    const customHeight = height ?? viewport?.height;
+    if (deviceKey === CUSTOM_DEVICE_KEY) {
+      if (!(Number(customWidth) > 0) || !(Number(customHeight) > 0)) {
+        res.status(400).json({ error: 'Custom device profile requires positive numeric width and height.' });
+        return;
+      }
     }
 
     if (hasActiveJob()) {
@@ -171,7 +189,9 @@ export function createApp() {
     const job = createJob({
       siteName: siteName && String(siteName).trim(),
       urls: cleanUrls,
-      viewport: viewport && viewport.width && viewport.height ? viewport : null,
+      deviceKey,
+      width: customWidth,
+      height: customHeight,
       concurrency: requestedConcurrency,
       ssrf: skipSsrfCheck ? null : {},
     });

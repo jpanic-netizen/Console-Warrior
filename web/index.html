@@ -48,15 +48,22 @@
     </div>
 
     <fieldset class="field-row viewport-fields">
-      <legend>Viewport (optional)</legend>
-      <label class="field field-narrow" for="viewport-width">
+      <legend>Device profile</legend>
+      <label class="field" for="device-select">
+        <span>Profile</span>
+        <select id="device-select">
+          <option value="desktop">Desktop (1440×900)</option>
+        </select>
+      </label>
+      <label class="field field-narrow" for="viewport-width" id="custom-width-field" hidden>
         <span>Width</span>
-        <input id="viewport-width" type="number" min="320" placeholder="1440">
+        <input id="viewport-width" type="number" min="200" placeholder="1440">
       </label>
-      <label class="field field-narrow" for="viewport-height">
+      <label class="field field-narrow" for="viewport-height" id="custom-height-field" hidden>
         <span>Height</span>
-        <input id="viewport-height" type="number" min="240" placeholder="900">
+        <input id="viewport-height" type="number" min="200" placeholder="900">
       </label>
+      <p class="field-hint" id="device-hint">Desktop viewport. CSS viewport dimensions, not physical screen resolution.</p>
     </fieldset>
 
     <div class="urls-block">
@@ -210,7 +217,7 @@
     <h1>Audit history</h1>
     <div class="table-wrap history-table-wrap">
       <table class="history-table">
-        <thead><tr><th scope="col">Site</th><th scope="col">Pages</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+        <thead><tr><th scope="col">Site</th><th scope="col">Pages</th><th scope="col">Device</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody id="history-rows"></tbody>
       </table>
     </div>

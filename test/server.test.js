@@ -466,6 +466,116 @@ test('GET /api/presets is empty when run outside the repo (no config/sites)', as
   });
 });
 
+test('GET /api/device-profiles lists the required built-in profiles plus Custom', async (t) => {
+  await withServer(t, async ({ base }) => {
+    const res = await fetch(`${base}/api/device-profiles`);
+    assert.equal(res.status, 200);
+    const profiles = await res.json();
+    assert.deepEqual(
+      profiles.map((p) => p.key),
+      ['desktop', 'iphone-17e', 'iphone-air', 'iphone-17-pro-max', 'custom']
+    );
+    const iphone17e = profiles.find((p) => p.key === 'iphone-17e');
+    assert.deepEqual(iphone17e.viewport, { width: 390, height: 844 });
+  });
+});
+
+test('POST /api/audits: an iPhone device profile actually emulates a mobile Chromium context, and the resolved profile is saved on the job/results/reports', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Device Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1, device: 'iphone-17e' }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.deepEqual(created.deviceProfile.viewport, { width: 390, height: 844 });
+    assert.equal(created.deviceProfile.isMobile, true);
+    assert.equal(created.deviceProfile.deviceScaleFactor, 3);
+    assert.equal(created.deviceProfile.emulationLabel, 'Chromium mobile emulation');
+
+    const job = await pollUntilDone(base, created.id);
+    assert.equal(job.status, 'completed');
+    assert.deepEqual(job.deviceProfile.viewport, { width: 390, height: 844 });
+
+    // Saved onto every page result, not just the job manifest.
+    const resultsRes = await fetch(`${base}/api/audits/${created.id}/results`);
+    const results = await resultsRes.json();
+    assert.equal(results.length, 1);
+    assert.deepEqual(results[0].deviceProfile.viewport, { width: 390, height: 844 });
+    assert.equal(results[0].deviceProfile.isMobile, true);
+    assert.equal(results[0].engine, 'chromium');
+
+    // Surfaced in the generated reports too.
+    const htmlRes = await fetch(`${base}/api/audits/${created.id}/download/html`);
+    const html = await htmlRes.text();
+    assert.match(html, /iPhone 17e/);
+    assert.match(html, /390.{0,3}844/); // "390×844" (allow for the × entity/character)
+    assert.match(html, /Chromium mobile emulation/);
+  });
+});
+
+test('POST /api/audits: an unrecognized device key is rejected before anything starts', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const before = (await (await fetch(`${base}/api/audits`)).json()).length;
+    const res = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Bad Device', urls: [`http://127.0.0.1:${fixturePort}/`], device: 'pixel-9-pro' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /device must be one of/);
+    const after = (await (await fetch(`${base}/api/audits`)).json()).length;
+    assert.equal(after, before);
+  });
+});
+
+test('POST /api/audits: custom device profile without width/height is rejected', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const res = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Bad Custom', urls: [`http://127.0.0.1:${fixturePort}/`], device: 'custom' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /width and height/);
+  });
+});
+
+test('POST /api/audits: custom width/height resolves to a custom device profile with desktop-like (non-mobile) emulation', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Custom Device Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1, device: 'custom', width: 1024, height: 768 }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.equal(created.deviceProfile.deviceKey, 'custom');
+    assert.deepEqual(created.deviceProfile.viewport, { width: 1024, height: 768 });
+    assert.equal(created.deviceProfile.isMobile, false);
+    await fetch(`${base}/api/audits/${created.id}/cancel`, { method: 'POST' });
+    await pollUntilDone(base, created.id);
+  });
+});
+
+test('POST /api/audits: omitting device defaults to the Desktop profile', async (t) => {
+  await withServer(t, async ({ base, fixturePort }) => {
+    const createRes = await fetch(`${base}/api/audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siteName: 'Default Device Test', urls: [`http://127.0.0.1:${fixturePort}/`], concurrency: 1 }),
+    });
+    const created = await createRes.json();
+    assert.equal(created.deviceProfile.deviceKey, 'desktop');
+    assert.deepEqual(created.deviceProfile.viewport, { width: 1440, height: 900 });
+    await fetch(`${base}/api/audits/${created.id}/cancel`, { method: 'POST' });
+    await pollUntilDone(base, created.id);
+  });
+});
+
 test('GET /api/presets surfaces the checked-in site configs, including OutSail', async (t) => {
   // Deliberately runs with the real repo cwd (no chdir) so config/sites/*.json is visible.
   const app = createApp();

@@ -7,6 +7,7 @@ import { renderHtmlReport } from '../report/html/render.js';
 import { renderDocxReport } from '../report/docx/render.js';
 import { extractFindings } from '../report/findings.js';
 import { slugify, timestampSlug } from '../util/slug.js';
+import { resolveDeviceProfile } from '../engine/deviceProfiles.js';
 
 // A function, not a frozen constant: this module is only ever imported once
 // per process (ESM caches it), so a `const` computed from process.cwd() at
@@ -64,6 +65,7 @@ function jobToJSON(job) {
     // needs to know that so it doesn't wait on a replay that will never come.
     hasLog: job.log.length > 0,
     summary: job.summary,
+    deviceProfile: job.deviceProfile,
   };
 }
 
@@ -77,15 +79,22 @@ async function persistManifest(job) {
   await fs.writeFile(path.join(job.outDir, 'job.json'), JSON.stringify(manifest, null, 2)).catch(() => {});
 }
 
-export function createJob({ siteName, urls, viewport, concurrency, ssrf }) {
+export function createJob({ siteName, urls, viewport, deviceKey, width, height, concurrency, ssrf }) {
   const name = siteName || 'Accessibility Audit';
   const id = `${slugify(name)}-${timestampSlug()}`;
   const outDir = path.join(outputRoot(), id);
+  const deviceProfile = resolveDeviceProfile({
+    deviceKey: deviceKey || (viewport ? 'custom' : 'desktop'),
+    width: width ?? viewport?.width,
+    height: height ?? viewport?.height,
+    engine: 'chromium',
+  });
   const job = {
     id,
     siteName: name,
     urls,
     viewport: viewport || null,
+    deviceProfile,
     concurrency: concurrency || 3,
     ssrf: ssrf || null,
     outDir,
@@ -134,7 +143,7 @@ export async function runJob(job) {
     const results = await auditSite({
       urls: job.urls,
       outDir: job.outDir,
-      viewport: job.viewport,
+      deviceProfile: job.deviceProfile,
       concurrency: job.concurrency,
       signal: job.abortController.signal,
       ssrf: job.ssrf,
@@ -158,6 +167,7 @@ export async function runJob(job) {
         siteName: job.siteName,
         generatedAt: new Date().toISOString(),
         urls: job.urls,
+        deviceProfile: job.deviceProfile,
         results,
         summary: job.summary,
       };
@@ -244,6 +254,7 @@ export async function hydrateFromDisk() {
       siteName: manifest.siteName,
       urls: manifest.urls,
       viewport: manifest.viewport,
+      deviceProfile: manifest.deviceProfile || resolveDeviceProfile({ deviceKey: 'desktop' }),
       concurrency: manifest.concurrency,
       outDir,
       status: manifest.status === 'running' || manifest.status === 'pending' ? 'interrupted' : manifest.status,
