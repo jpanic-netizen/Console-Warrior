@@ -1,4 +1,4 @@
-import { escapeHtml, displayPagePath, findingCard, findingGroupCard, SEVERITY_LABEL } from './render.js';
+import { escapeHtml, displayPagePath, findingCard, findingGroupCard, thumbHtml, SEVERITY_LABEL } from './render.js';
 
 const app = document.getElementById('app');
 const navLinks = document.querySelectorAll('[data-nav]');
@@ -115,20 +115,49 @@ async function renderNewAuditView() {
     // device list is a convenience only — the hardcoded "Desktop" fallback option in the HTML still works
   }
 
+  const engineSelect = document.getElementById('engine-select');
+  const engineHint = document.getElementById('engine-hint');
+  try {
+    const engineOptions = await fetchJSON('/api/engines');
+    engineSelect.replaceChildren(
+      ...engineOptions.map((e) => {
+        const opt = document.createElement('option');
+        opt.value = e.key;
+        opt.textContent = e.label;
+        return opt;
+      })
+    );
+  } catch {
+    // engine list is a convenience only — the hardcoded "Chromium" fallback option in the HTML still works
+  }
+
+  function currentEngineLabel() {
+    return engineSelect.value === 'webkit' ? 'WebKit Safari-like emulation' : engineSelect.value === 'both' ? 'Chromium mobile emulation + WebKit Safari-like emulation' : 'Chromium mobile emulation';
+  }
+
   function updateDeviceUi() {
     const isCustom = deviceSelect.value === 'custom';
     customWidthField.hidden = !isCustom;
     customHeightField.hidden = !isCustom;
     const profile = deviceProfiles.find((p) => p.key === deviceSelect.value);
     if (isCustom) {
-      deviceHint.textContent = 'Custom viewport — CSS pixels, not physical screen resolution. Runs as a desktop-style Chromium context at this size (no mobile/touch emulation).';
+      deviceHint.textContent = `Custom viewport — CSS pixels, not physical screen resolution. Runs as a desktop-style context at this size (no mobile/touch emulation), under ${engineSelect.value === 'both' ? 'both engines' : engineSelect.value}.`;
     } else if (deviceSelect.value === 'desktop') {
       deviceHint.textContent = 'Desktop viewport. CSS viewport dimensions, not physical screen resolution.';
     } else {
-      deviceHint.textContent = `${profile ? `${profile.viewport.width}×${profile.viewport.height}, ` : ''}Chromium mobile emulation — not real Mobile Safari or real hardware.`;
+      deviceHint.textContent = `${profile ? `${profile.viewport.width}×${profile.viewport.height}, ` : ''}${currentEngineLabel()} — not real Mobile Safari, real Safari, or real hardware.`;
     }
   }
   deviceSelect.addEventListener('change', updateDeviceUi);
+  engineSelect.addEventListener('change', () => {
+    engineHint.textContent =
+      engineSelect.value === 'webkit'
+        ? 'WebKit (headless) — genuine WebKit-engine automation via Playwright, not real Safari.'
+        : engineSelect.value === 'both'
+          ? 'Runs every page through both Chromium and WebKit; findings are tagged per engine and deduplicated in the comparison view.'
+          : 'Chromium (headless). Neither engine is real Safari or a real device — see the device profile hint above.';
+    updateDeviceUi();
+  });
   updateDeviceUi();
 
   presetSelect.addEventListener('change', () => {
@@ -178,6 +207,7 @@ async function renderNewAuditView() {
           device,
           width: device === 'custom' ? width : undefined,
           height: device === 'custom' ? height : undefined,
+          browserEngine: engineSelect.value || 'chromium',
         }),
       });
       location.hash = `#/jobs/${encodeURIComponent(job.id)}`;
@@ -233,6 +263,68 @@ function renderBreakdown(breakdown) {
     .map((p) => `<tr><td class="pagecell" title="${escapeHtml(p.page)}">${escapeHtml(displayPagePath(p.page))}</td><td class="num">${p.automated}</td><td class="num">${p.manual}</td></tr>`)
     .join('');
   document.getElementById('breakdown-page-rows').innerHTML = pageRows || '<tr><td colspan="3" class="empty-note">No findings.</td></tr>';
+}
+
+const CLASSIFICATION_LABEL = { both: 'Both engines', 'chromium-only': 'Chromium only', 'webkit-only': 'WebKit only' };
+
+/**
+ * A cross-browser group is rendered the same way a single-page grouped
+ * finding is (see findingGroupCard in render.js): no arrow for a single
+ * instance, an explicit "Show N engine results" disclosure when there's more
+ * than one — the same "never an unlabeled arrow, never a duplicated
+ * screenshot" rules apply here, just grouped by engine instead of by page.
+ */
+function crossBrowserCard(g) {
+  const path = displayPagePath(g.page);
+  if (g.instances.length <= 1) {
+    const inst = g.instances[0] || {};
+    return `
+      <div class="finding-card">
+        ${thumbHtml(inst.screenshot, inst.fullPageScreenshot, `Evidence for ${g.checkLabel} on ${path} (${inst.engine})`)}
+        <div class="finding-body">
+          <div class="finding-top"><span class="chip ${g.classification === 'both' ? 'manual' : 'critical'}">${CLASSIFICATION_LABEL[g.classification]}</span><span class="finding-page" title="${escapeHtml(g.page)}">${escapeHtml(path)}</span><strong>${escapeHtml(g.checkLabel)}</strong></div>
+          <div class="finding-summary">${escapeHtml(g.summary)}</div>
+        </div>
+      </div>`;
+  }
+  const rows = g.instances
+    .map(
+      (inst) => `
+      <li class="finding-page-row">
+        ${thumbHtml(inst.screenshot, inst.fullPageScreenshot, `Evidence for ${g.checkLabel} on ${path} (${inst.engine})`)}
+        <span class="finding-page-row-label">${escapeHtml(inst.engine)}</span>
+      </li>`
+    )
+    .join('');
+  return `
+    <details class="finding-group">
+      <summary class="finding-group-summary">
+        <span class="finding-group-meta">
+          <span class="finding-top"><span class="chip manual">${CLASSIFICATION_LABEL[g.classification]}</span><span class="finding-page" title="${escapeHtml(g.page)}">${escapeHtml(path)}</span><strong>${escapeHtml(g.checkLabel)}</strong></span>
+          <span class="finding-summary">${escapeHtml(g.summary)}</span>
+        </span>
+        <span class="finding-page-count">Show ${g.instances.length} engine results</span>
+      </summary>
+      <ul class="finding-page-list">${rows}</ul>
+    </details>`;
+}
+
+function renderCrossBrowser(cb) {
+  const { summary, groups } = cb;
+  document.getElementById('cross-browser-meta').textContent =
+    `${summary.totalUniqueFindings} unique finding${summary.totalUniqueFindings === 1 ? '' : 's'} (deduplicated across engines) · ${summary.pagesAffected} page(s) affected · engines run: ${summary.enginesInvolved.join(', ')}`;
+  document.getElementById('cross-browser-kpis').innerHTML = `
+    <div class="kpi manual"><div class="num">${summary.byClassification.both}</div><div class="label">Both engines</div></div>
+    <div class="kpi"><div class="num">${summary.byClassification['chromium-only']}</div><div class="label">Chromium only</div></div>
+    <div class="kpi"><div class="num">${summary.byClassification['webkit-only']}</div><div class="label">WebKit only</div></div>
+  `;
+  document.getElementById('cross-browser-grid').innerHTML = groups.length
+    ? groups
+        .slice()
+        .sort((a, b) => b.instances.length - a.instances.length)
+        .map(crossBrowserCard)
+        .join('')
+    : '<p class="empty-note">No findings to compare.</p>';
 }
 
 // ---------- Lightbox ----------
@@ -400,6 +492,22 @@ async function renderJobView(id) {
         // breakdown is supplementary — KPIs above still convey the totals
       }
 
+      const engineFilterField = document.getElementById('filter-engine-field');
+      const isCrossBrowserRun = job.engines && job.engines.length > 1;
+      engineFilterField.hidden = !isCrossBrowserRun;
+      const crossBrowserSection = document.getElementById('cross-browser-section');
+      if (isCrossBrowserRun) {
+        try {
+          const cb = await fetchJSON(`/api/audits/${encodeURIComponent(id)}/cross-browser`);
+          renderCrossBrowser(cb);
+          crossBrowserSection.hidden = false;
+        } catch {
+          // comparison is supplementary — the raw per-engine findings below still work via the Browser filter
+        }
+      } else {
+        crossBrowserSection.hidden = true;
+      }
+
       const pageSelect = document.getElementById('filter-page');
       const checkSelect = document.getElementById('filter-check');
       pageSelect.replaceChildren(new Option('All pages', ''));
@@ -456,6 +564,8 @@ async function renderJobView(id) {
         if (severityValue) params.set('severity', severityValue);
         const manualValue = document.getElementById('filter-manual').value;
         if (manualValue) params.set('manualReview', manualValue);
+        const engineValue = document.getElementById('filter-engine').value;
+        if (engineValue) params.set('engine', engineValue);
         if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
         if (state.view === 'grouped') params.set('grouped', 'true');
         params.set('sortBy', sortSelect.value);
@@ -475,7 +585,7 @@ async function renderJobView(id) {
           : '<p class="empty-note">No findings match these filters.</p>';
       }
 
-      [pageSelect, checkSelect, document.getElementById('filter-severity'), document.getElementById('filter-manual'), sortSelect, pageSizeSelect].forEach((el) =>
+      [pageSelect, checkSelect, document.getElementById('filter-severity'), document.getElementById('filter-manual'), document.getElementById('filter-engine'), sortSelect, pageSizeSelect].forEach((el) =>
         el.addEventListener('change', () => {
           state.page = 0;
           applyFilters();

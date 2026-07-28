@@ -66,6 +66,17 @@
       <p class="field-hint" id="device-hint">Desktop viewport. CSS viewport dimensions, not physical screen resolution.</p>
     </fieldset>
 
+    <fieldset class="field-row viewport-fields">
+      <legend>Browser engine</legend>
+      <label class="field" for="engine-select">
+        <span>Engine</span>
+        <select id="engine-select">
+          <option value="chromium">Chromium</option>
+        </select>
+      </label>
+      <p class="field-hint" id="engine-hint">Chromium (headless). Neither engine is real Safari or a real device — see the device profile hint above.</p>
+    </fieldset>
+
     <div class="urls-block">
       <div class="urls-header">
         <label for="url-bulk">Pages to audit</label>
@@ -141,6 +152,13 @@
         </div>
       </div>
 
+      <section id="cross-browser-section" hidden aria-labelledby="cross-browser-heading">
+        <h2 id="cross-browser-heading" class="section-heading">Cross-browser comparison</h2>
+        <p class="field-hint" id="cross-browser-meta"></p>
+        <div class="kpis" id="cross-browser-kpis"></div>
+        <div class="findings-grid" id="cross-browser-grid"></div>
+      </section>
+
       <h2 class="section-heading">Findings</h2>
       <div class="view-toggle" role="group" aria-label="Findings view">
         <button type="button" id="view-grouped" class="toggle-btn" aria-pressed="true">Grouped</button>
@@ -172,6 +190,14 @@
             <option value="">Automated + manual</option>
             <option value="false">Automated only</option>
             <option value="true">Manual review only</option>
+          </select>
+        </label>
+        <label class="field field-narrow" for="filter-engine" id="filter-engine-field" hidden>
+          <span>Browser</span>
+          <select id="filter-engine">
+            <option value="">All browsers</option>
+            <option value="chromium">Chromium</option>
+            <option value="webkit">WebKit</option>
           </select>
         </label>
         <label class="field" for="filter-search">
