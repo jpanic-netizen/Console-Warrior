@@ -13,7 +13,7 @@ function makePageResult(overrides = {}) {
     aria: { noName: [], labelInName: [], inputNoLabel: [], noAutocomplete: [], ariaExpandedBad: [], duplicateIds: [] },
     keyboard: {
       tabOrder: { invisibleStops: [] },
-      dropdowns: { failingCount: 0 },
+      dropdowns: { results: [], failingCount: 0 },
       focusableHidden: { focusableButHidden: [] },
     },
     focusState: { noIndicator: [], weakIndicator: [] },

@@ -16,7 +16,7 @@ import {
   hasActiveJob,
   LIMITS,
 } from './jobManager.js';
-import { listCheckTypes, groupFindings, summarizeBreakdown } from '../report/findings.js';
+import { listCheckTypes, groupFindings, summarizeBreakdown, bucketFindings, buildCoverageReport, REPORT_BUCKETS, BUCKET_META } from '../report/findings.js';
 import { sortFindings, searchFindings, defaultSortDir } from '../report/sortSearch.js';
 import { checkTargetSafety } from '../engine/ssrfGuard.js';
 
@@ -93,6 +93,10 @@ export function createApp() {
     res.json(listCheckTypes());
   });
 
+  app.get('/api/report-buckets', (req, res) => {
+    res.json(REPORT_BUCKETS.map((key) => ({ key, ...BUCKET_META[key] })));
+  });
+
   app.get('/api/limits', (req, res) => {
     res.json(LIMITS);
   });
@@ -122,7 +126,11 @@ export function createApp() {
   });
 
   app.post('/api/audits', async (req, res) => {
-    const { siteName, urls, viewport, concurrency } = req.body || {};
+    const { siteName, urls, viewport, concurrency, environment } = req.body || {};
+    if (environment !== undefined && environment !== null && environment !== '' && environment !== 'staging' && environment !== 'production') {
+      res.status(400).json({ error: 'environment must be "staging" or "production" (or omitted).' });
+      return;
+    }
     const cleanUrls = Array.isArray(urls)
       ? urls.map((u) => String(u).trim()).filter(Boolean)
       : [];
@@ -174,6 +182,7 @@ export function createApp() {
       viewport: viewport && viewport.width && viewport.height ? viewport : null,
       concurrency: requestedConcurrency,
       ssrf: skipSsrfCheck ? null : {},
+      environment: environment || null,
     });
     startJob(job);
     res.status(201).json(jobToJSON(job));
@@ -252,13 +261,30 @@ export function createApp() {
     res.json(summarizeBreakdown(all));
   });
 
+  app.get('/api/audits/:id/coverage', (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (!job.results) return res.status(202).json({ status: job.status, message: 'Coverage not ready yet.' });
+    res.json(buildCoverageReport(job.results));
+  });
+
+  app.get('/api/audits/:id/buckets', (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    const all = getJobFindings(req.params.id);
+    if (!all) return res.status(202).json({ status: job.status, message: 'Buckets not ready yet.' });
+    const buckets = bucketFindings(all);
+    const counts = Object.fromEntries(REPORT_BUCKETS.map((k) => [k, buckets[k].length]));
+    res.json({ counts });
+  });
+
   app.get('/api/audits/:id/findings', (req, res) => {
     const job = getJob(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     const all = getJobFindings(req.params.id);
     if (!all) return res.status(202).json({ status: job.status, message: 'Findings not ready yet.' });
 
-    const { page, check, severity, manualReview, q, grouped, sortBy, sortDir, limit, offset } = req.query;
+    const { page, check, severity, manualReview, bucket, q, grouped, sortBy, sortDir, limit, offset } = req.query;
 
     let findings = all;
     if (page) findings = findings.filter((f) => f.page === page);
@@ -266,6 +292,7 @@ export function createApp() {
     if (severity) findings = findings.filter((f) => f.severity === severity);
     if (manualReview === 'true') findings = findings.filter((f) => f.manualReview);
     if (manualReview === 'false') findings = findings.filter((f) => !f.manualReview);
+    if (bucket) findings = findings.filter((f) => f.bucket === bucket);
     findings = searchFindings(findings, q);
 
     const isGrouped = grouped === 'true';

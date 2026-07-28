@@ -44,6 +44,7 @@ function jobToJSON(job) {
     urls: job.urls,
     viewport: job.viewport,
     concurrency: job.concurrency,
+    environment: job.environment,
     status: job.status,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
@@ -77,7 +78,7 @@ async function persistManifest(job) {
   await fs.writeFile(path.join(job.outDir, 'job.json'), JSON.stringify(manifest, null, 2)).catch(() => {});
 }
 
-export function createJob({ siteName, urls, viewport, concurrency, ssrf }) {
+export function createJob({ siteName, urls, viewport, concurrency, ssrf, environment }) {
   const name = siteName || 'Accessibility Audit';
   const id = `${slugify(name)}-${timestampSlug()}`;
   const outDir = path.join(outputRoot(), id);
@@ -88,6 +89,7 @@ export function createJob({ siteName, urls, viewport, concurrency, ssrf }) {
     viewport: viewport || null,
     concurrency: concurrency || 3,
     ssrf: ssrf || null,
+    environment: environment || null,
     outDir,
     status: 'pending',
     createdAt: Date.now(),
@@ -138,6 +140,7 @@ export async function runJob(job) {
       concurrency: job.concurrency,
       signal: job.abortController.signal,
       ssrf: job.ssrf,
+      environment: job.environment,
       onPageStart: (url) => {
         job.inFlight.add(url);
         emit(job, { type: 'page-start', url });
@@ -245,6 +248,7 @@ export async function hydrateFromDisk() {
       urls: manifest.urls,
       viewport: manifest.viewport,
       concurrency: manifest.concurrency,
+      environment: manifest.environment || null,
       outDir,
       status: manifest.status === 'running' || manifest.status === 'pending' ? 'interrupted' : manifest.status,
       createdAt: manifest.createdAt,

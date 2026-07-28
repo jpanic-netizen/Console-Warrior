@@ -13,6 +13,7 @@ import {
   WidthType,
   ShadingType,
 } from 'docx';
+import { extractFindings, bucketFindings, buildCoverageReport, BUCKET_META } from '../findings.js';
 
 const FAIL_SHADE = 'F8D7DA';
 const WARN_SHADE = 'FFF3CD';
@@ -80,13 +81,51 @@ export async function renderDocxReport(report, outPath) {
 
   children.push(
     new Paragraph({ text: `${report.siteName} — WCAG 2.1 AA Structured Accessibility Review`, heading: HeadingLevel.TITLE }),
-    para(`Generated ${report.generatedAt} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s)`),
+    para(`Generated ${report.generatedAt} · Scope: SOW S2.3.F (contrast, keyboard navigation, focus states, alt text, heading hierarchy, ARIA labels) · ${report.urls.length} page(s) · Environment: ${report.environment || 'not specified'}`),
     heading('Executive summary', HeadingLevel.HEADING_1),
     para(`Pages audited: ${report.summary.pagesAudited} · Pages errored: ${report.summary.pagesErrored} · Manual-review items (never counted as failures): ${report.summary.manualReviewCount}`),
     dataTable(
       ['Check', 'Total findings', 'Pages affected'],
       Object.entries(report.summary.totals).map(([k, v]) => [k, String(v), String(report.summary.perCheckPages[k].length)])
     )
+  );
+
+  const findings = extractFindings(report.results);
+  const buckets = bucketFindings(findings);
+  children.push(heading('SOP reporting summary (§9)', HeadingLevel.HEADING_1));
+  for (const [key, meta] of Object.entries(BUCKET_META)) {
+    const items = buckets[key] || [];
+    children.push(heading(meta.title, HeadingLevel.HEADING_2));
+    children.push(para(meta.hint, { italics: true }));
+    children.push(
+      ...(await findingBlock(
+        meta.title,
+        items.length,
+        items.map((f) => [new URL(f.page).pathname || '/', f.checkLabel, f.suggestedSeverity || f.severity || '—', f.summary]),
+        ['Page', 'Check', 'Severity', 'Summary'],
+        key !== 'verifiedDefects' && key !== 'candidatesAwaitingVerification'
+      ))
+    );
+  }
+
+  const { passed, notVerified } = buildCoverageReport(report.results);
+  children.push(heading('Coverage', HeadingLevel.HEADING_1));
+  children.push(
+    ...(await findingBlock(
+      'What passed (checked, nothing found)',
+      passed.length,
+      passed.map((p) => [p.section, p.label, p.manualReview ? 'manual review' : 'automated', String(p.pages.length)]),
+      ['Section', 'Check', 'Type', 'Pages passing']
+    ))
+  );
+  children.push(
+    ...(await findingBlock(
+      'What was not verified (audit could not complete)',
+      notVerified.length,
+      notVerified.map((n) => [n.url, n.reason]),
+      ['Page', 'Reason'],
+      true
+    ))
   );
 
   for (const r of report.results) {

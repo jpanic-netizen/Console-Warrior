@@ -1,6 +1,7 @@
 import { launchBrowser, newAuditContext } from './browser.js';
 import { auditPage } from './pageAudit.js';
 import { installSsrfGuard } from './ssrfGuard.js';
+import { auditInfrastructure } from './checks/infrastructure.js';
 
 async function mapWithConcurrency(items, limit, fn, signal) {
   const results = new Array(items.length);
@@ -36,8 +37,20 @@ async function mapWithConcurrency(items, limit, fn, signal) {
  * trusted operator auditing a site directly) and the local fixture-server
  * smoke test keep working unchanged; the dashboard turns this on since it
  * lets arbitrary callers submit arbitrary URLs.
+ *
+ * `environment` (optional 'staging' | 'production') feeds the infrastructure
+ * check (robots.txt/sitemap/custom-404/HTTPS), which runs once for the
+ * whole site — not once per page — against the first URL's origin, run
+ * concurrently with the per-page audits since it doesn't depend on them.
+ * Its result is attached to the first successfully-completed page result's
+ * `.infrastructure` field (a pragmatic compromise: the per-page result
+ * array is this engine's one shared data shape, and every downstream
+ * consumer — buildSummary, extractFindings, reports — already iterates it;
+ * introducing a true second, site-level return value would touch all of
+ * them for one check). If every page errors, the infrastructure result is
+ * simply not attached anywhere and is dropped — an accepted edge case.
  */
-export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPageDone, onPageStart, signal, ssrf }) {
+export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPageDone, onPageStart, signal, ssrf, environment }) {
   const browser = await launchBrowser();
   const onAbort = () => browser.close().catch(() => {});
   if (signal) {
@@ -45,13 +58,23 @@ export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPag
     else signal.addEventListener('abort', onAbort, { once: true });
   }
   try {
+    const infrastructurePromise = (async () => {
+      if (!urls.length) return null;
+      try {
+        const origin = new URL(urls[0]).origin;
+        return await auditInfrastructure(origin, { environment });
+      } catch {
+        return null;
+      }
+    })();
+
     const results = await mapWithConcurrency(urls, concurrency, async (url, index) => {
       if (signal?.aborted) return null;
       if (onPageStart) onPageStart(url, index);
       const context = await newAuditContext(browser, viewport);
       if (ssrf) await installSsrfGuard(context, ssrf);
       try {
-        const result = await auditPage(context, url, { outDir });
+        const result = await auditPage(context, url, { outDir, ssrf });
         if (onPageDone) onPageDone(result);
         return result;
       } catch (e) {
@@ -62,7 +85,13 @@ export async function auditSite({ urls, outDir, viewport, concurrency = 3, onPag
         await context.close().catch(() => {});
       }
     }, signal);
-    return results.filter(Boolean);
+
+    const okResults = results.filter(Boolean);
+    const infrastructure = await infrastructurePromise;
+    const firstOk = okResults.find((r) => !r.error);
+    if (infrastructure && firstOk) firstOk.infrastructure = infrastructure;
+
+    return okResults;
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort);
     await browser.close().catch(() => {});

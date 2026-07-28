@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractFindings, listCheckTypes, groupFindings, summarizeBreakdown, SEVERITIES } from '../src/report/findings.js';
+import { extractFindings, listCheckTypes, groupFindings, summarizeBreakdown, SEVERITIES, SOP_SEVERITIES, suggestSopSeverity } from '../src/report/findings.js';
 import { sortFindings, searchFindings, defaultSortDir } from '../src/report/sortSearch.js';
 
 /** Minimal but structurally complete synthetic page result, matching what auditPage() produces. */
@@ -71,7 +71,39 @@ test('extractFindings keeps manual-review items out of severity buckets', () => 
   assert.equal(findings.length, 2);
   assert.ok(findings.every((f) => f.manualReview === true));
   assert.ok(findings.every((f) => f.severity === null));
+  assert.ok(findings.every((f) => f.suggestedSeverity === null), 'manual-review items get no automated severity suggestion at all');
 });
+
+// ---------- SOP severity mapping + candidate/triage fields ----------
+
+test('suggestSopSeverity caps critical and serious at "High" — never "Blocker", which requires human judgement of launch/journey impact', () => {
+  assert.equal(suggestSopSeverity('critical'), 'High');
+  assert.equal(suggestSopSeverity('serious'), 'High');
+  assert.equal(suggestSopSeverity('moderate'), 'Medium');
+  assert.equal(suggestSopSeverity('minor'), 'Low');
+  assert.equal(suggestSopSeverity(null), null);
+  for (const internal of SEVERITIES) {
+    assert.notEqual(suggestSopSeverity(internal), 'Blocker', `${internal} must never auto-suggest Blocker`);
+  }
+  assert.ok(SOP_SEVERITIES.includes('Blocker'), 'Blocker is still a valid confirmedSeverity value — just never an automated suggestion');
+});
+
+test('extractFindings: every finding starts life as an untriaged candidate with a suggested-vs-confirmed severity split', () => {
+  const page = makePageResult({
+    contrast: { failures: [{ id: 'c1', text: 'Low contrast', ratio: 2.1, needed: 4.5, screenshot: null }], manualReview: [] },
+  });
+  const findings = extractFindings([page]);
+  const f = findings[0];
+  assert.equal(f.severity, 'serious'); // internal vocabulary, unchanged
+  assert.equal(f.suggestedSeverity, 'High'); // SOP-mapped, capped
+  assert.equal(f.confirmedSeverity, null); // only a human sets this, later
+  assert.equal(f.verificationStatus, 'candidate');
+  assert.equal(f.classification, null);
+  assert.equal(f.reproducible, null);
+  assert.equal(f.origin, 'internal');
+  assert.equal(f.reference, null);
+});
+
 
 test('extractFindings takes axe severity from axe\'s own impact field, not a fixed default', () => {
   const page = makePageResult({
@@ -134,11 +166,139 @@ test('extractFindings assigns unique, stable ids across pages', () => {
   assert.equal(findings[1].page, 'https://example.com/b');
 });
 
+// ---------- SEO metadata checks ----------
+
+function seoPage(overrides = {}) {
+  return makePageResult({
+    headings: { visibleHeadings: [], skips: [], emptyHeadingsCount: 0, visibleH1Count: 1, h1InDomCount: 1, pageTitle: 'A Real Title' },
+    seo: { description: 'A real description', canonical: 'https://example.com/', ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: 'summary', robotsMeta: null, ...overrides },
+  });
+}
+
+test('SEO checks: a fully-populated, clean page produces no SEO findings at all', () => {
+  const findings = extractFindings([seoPage()]);
+  assert.equal(findings.filter((f) => f.section === '10 · SEO metadata').length, 0);
+});
+
+test('SEO checks: a page result with no seo field at all (check never ran) is silently skipped, not treated as "everything missing"', () => {
+  const findings = extractFindings([makePageResult()]); // no `seo` key
+  assert.equal(findings.filter((f) => f.checkKey.startsWith('seo')).length, 0);
+});
+
+test('SEO checks: missing description/canonical/Twitter Card/H1 are each reported once, with the right severity', () => {
+  const page = makePageResult({
+    headings: { visibleHeadings: [], skips: [], emptyHeadingsCount: 0, visibleH1Count: 0, h1InDomCount: 0, pageTitle: 'x' },
+    seo: { description: null, canonical: null, ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: null, robotsMeta: null },
+  });
+  const findings = extractFindings([page]);
+  const byKey = Object.fromEntries(findings.map((f) => [f.checkKey, f]));
+  assert.equal(byKey.seoMissingH1.severity, 'serious');
+  assert.equal(byKey.seoMissingDescription.severity, 'moderate');
+  assert.equal(byKey.seoMissingCanonical.severity, 'moderate');
+  assert.equal(byKey.seoMissingTwitterCard.severity, 'minor');
+  assert.equal(byKey.seoMissingOpenGraph, undefined, 'all three OG tags were present, so this must not fire');
+});
+
+test('SEO checks: missing Open Graph tags are named individually in the summary', () => {
+  const page = makePageResult({ seo: { description: 'd', canonical: 'c', ogTitle: null, ogDescription: null, ogImage: 'set', twitterCard: 't', robotsMeta: null } });
+  const findings = extractFindings([page]);
+  const og = findings.find((f) => f.checkKey === 'seoMissingOpenGraph');
+  assert.ok(og);
+  assert.match(og.summary, /og:title/);
+  assert.match(og.summary, /og:description/);
+  assert.ok(!og.summary.includes('og:image'), 'og:image was present and must not be listed as missing');
+});
+
+test('SEO checks: noindex is always a manual-review candidate, never an automated pass/fail, since that depends on staging vs production', () => {
+  const page = makePageResult({ seo: { description: 'd', canonical: 'c', ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: 't', robotsMeta: 'noindex, nofollow' } });
+  const findings = extractFindings([page]);
+  const noindex = findings.find((f) => f.checkKey === 'seoNoindexReview');
+  assert.ok(noindex);
+  assert.equal(noindex.manualReview, true);
+  assert.equal(noindex.severity, null);
+});
+
+test('SEO checks: duplicate titles/descriptions across pages are detected end-to-end through extractFindings', () => {
+  const pages = [
+    seoPage({ description: 'Same description' }),
+    makePageResult({
+      url: 'https://example.com/b',
+      headings: { visibleHeadings: [], skips: [], emptyHeadingsCount: 0, visibleH1Count: 1, h1InDomCount: 1, pageTitle: 'A Real Title' },
+      seo: { description: 'Same description', canonical: 'https://example.com/b', ogTitle: 'x', ogDescription: 'x', ogImage: 'x', twitterCard: 'summary', robotsMeta: null },
+    }),
+  ];
+  const findings = extractFindings(pages);
+  const dupTitle = findings.filter((f) => f.checkKey === 'seoDuplicateTitle');
+  const dupDesc = findings.filter((f) => f.checkKey === 'seoDuplicateDescription');
+  assert.equal(dupTitle.length, 2, 'both pages share the exact same title');
+  assert.equal(dupDesc.length, 2, 'both pages share the exact same description');
+});
+
+// ---------- Console errors ----------
+
+test('consoleErrors splits first-party (automated candidate) from third-party (manual-review, not assumed the site\'s own defect)', () => {
+  const page = makePageResult({
+    consoleErrors: [
+      { message: 'Internal bug', source: 'https://example.com/app.js', kind: 'uncaught', origin: 'internal' },
+      { message: 'Widget crashed', source: 'https://widget.example.net/embed.js', kind: 'console.error', origin: 'external' },
+    ],
+  });
+  const findings = extractFindings([page]);
+
+  const internalFindings = findings.filter((f) => f.checkKey === 'consoleErrors');
+  assert.equal(internalFindings.length, 1);
+  assert.match(internalFindings[0].summary, /^\[internal\] Internal bug/);
+  assert.equal(internalFindings[0].origin, 'internal');
+  assert.equal(internalFindings[0].manualReview, false);
+  assert.equal(internalFindings[0].bucket, 'candidatesAwaitingVerification');
+
+  const externalFindings = findings.filter((f) => f.checkKey === 'consoleErrorsExternal');
+  assert.equal(externalFindings.length, 1);
+  assert.match(externalFindings[0].summary, /^\[external\] Widget crashed/);
+  assert.equal(externalFindings[0].origin, 'external');
+  assert.equal(externalFindings[0].reference, 'https://widget.example.net/embed.js');
+  assert.equal(externalFindings[0].manualReview, true);
+  assert.equal(externalFindings[0].bucket, 'externalEnvironmentIssues');
+});
+
+test('consoleErrors checks produce nothing when the page result has no consoleErrors field at all', () => {
+  const findings = extractFindings([makePageResult()]);
+  assert.equal(findings.filter((f) => f.checkKey === 'consoleErrors' || f.checkKey === 'consoleErrorsExternal').length, 0);
+});
+
+// ---------- Infrastructure (site-level) ----------
+
+test('infrastructure checks read from r.infrastructure (attached to one page result, not repeated per page) and split automated vs manual-review correctly', () => {
+  const page = makePageResult({
+    infrastructure: {
+      robotsTxt: { manualReview: false, summary: 'robots.txt blocks production' },
+      sitemapXml: { manualReview: false, summary: 'sitemap missing' },
+      custom404: { manualReview: false, summary: 'soft-404' },
+      httpsRedirect: { manualReview: true, summary: 'confirm HTTPS intent' },
+    },
+  });
+  const findings = extractFindings([page]);
+  const byKey = Object.fromEntries(findings.map((f) => [f.checkKey, f]));
+  assert.ok(byKey.infraRobotsTxt);
+  assert.equal(byKey.infraRobotsTxt.manualReview, false);
+  assert.ok(byKey.infraSitemapXml);
+  assert.ok(byKey.infraCustom404);
+  assert.ok(byKey.infraHttpsReview);
+  assert.equal(byKey.infraHttpsReview.manualReview, true);
+  assert.equal(byKey.infraHttps, undefined, 'the manual-review variant fired, so the automated one must not');
+  assert.equal(byKey.infraRobotsTxtReview, undefined, 'the automated variant fired, so the manual-review one must not');
+});
+
+test('infrastructure checks produce nothing when r.infrastructure is entirely absent (most pages, since it only attaches to one)', () => {
+  const findings = extractFindings([makePageResult(), makePageResult({ url: 'https://example.com/b' })]);
+  assert.equal(findings.filter((f) => f.checkKey.startsWith('infra')).length, 0);
+});
+
 test('listCheckTypes covers every SOW section and flags manual-review checks', () => {
   const checks = listCheckTypes();
   assert.ok(checks.length > 15);
   const manualKeys = checks.filter((c) => c.manualReview).map((c) => c.key);
-  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'contrastManualReview'].sort());
+  assert.deepEqual(manualKeys.sort(), ['altReviewEmptyAlt', 'brokenLinksExternalReview', 'brokenImagesExternalReview', 'brokenImagesRenderReview', 'contrastManualReview', 'deadClicks', 'seoNoindexReview', 'consoleErrorsExternal', 'infraRobotsTxtReview', 'infraHttpsReview'].sort());
 });
 
 // ---------- groupFindings ----------
